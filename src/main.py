@@ -1,0 +1,1 @@
+print("ABB-Appraisal-Tool initialized successfully")

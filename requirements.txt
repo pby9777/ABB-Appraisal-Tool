@@ -1,0 +1,6 @@
+flask
+pandas
+openpyxl
+python-docx
+numpy
+xlsxwriter
