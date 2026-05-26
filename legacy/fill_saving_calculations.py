@@ -64,16 +64,15 @@ CANONICAL_HEADERS = {
     "ie_class":     ["Ie Eff Class", "IE Eff Class", "Ie Eff. Class"],
     "dol_vsd":      ["Dol Vsd", "DOL/VSD", "Dol Vsd / Connection",
                      "Dol Vsd/Connection"],
-    "flow_control": ["Flow Control"],
-    "output_kw":    ["Output (kW)"],
+    "flow_control": ["Flow Control Method", "Flow Control"],
+    "output_kw":    ["Output (kW/HP)", "Output (kW)"],
     "shaft_height": ["Shaft height (Frame)", "Shaft Height (Frame)",
                      "Shaft height(Frame)"],
     "run_hours":    ["Annual Running Hours", "Running Hours",
                      "Annual Running Hours [h]"],
-    "avg_loading":  ["Average Loading", "Average Loading ",
-                     "Average flow", "Avg Loading", "Average Flow"],
-    "avg_freq":     ["Average Freqency", "Average Frequency",
-                     "Avg Freqency", "Avg Frequency"],
+    "avg_loading":  ["Average Loading (%)"],
+    "avg_flow":     ["Average Flow (%)"],
+    "avg_freq":     ["Average Freqency (Hz)"],
     "ess_motor":    ["Recommended ESS motor", "Recommended ESS Motor"],
     "ess_drive":    ["ESS connection", "ESS Connection"],
 }
@@ -190,26 +189,89 @@ def read_assessment_data(path):
     return records
 
 
+# Flow bands used to compute avg_flow in Method B outputs.
+_FLOW_BANDS = [
+    (20,  "Hours at Flow 20%"),
+    (30,  "Hours at Flow 30%"),
+    (40,  "Hours at Flow 40%"),
+    (50,  "Hours at Flow 50%"),
+    (60,  "Hours at Flow 60%"),
+    (70,  "Hours at Flow 70%"),
+    (80,  "Hours at Flow 80%"),
+    (90,  "Hours at Flow 90%"),
+    (100, "Hours at Flow 100%"),
+]
+
+
 def read_input_assets(path):
-    """Read input assets xlsx. Returns dict keyed by equip_id."""
+    """Read input assets xlsx. Returns dict keyed by equip_id.
+
+    Supports two ABB EEA output variants detected by header names:
+      Method A — provides Avg Loading [%] and Avg Frequency [Hz] directly.
+      Method B — provides Hours at Flow 20%–100%; avg_flow is computed as
+                 Σ(flow% × hours) / Σ(hours), excluding zero-hour bands.
+    Fields absent for a given variant are stored as None.
+    """
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb.active
+
+    # Map each header name to its 0-based column index.
+    header = {
+        str(cell.value).strip(): cell.column - 1
+        for cell in ws[1]
+        if cell.value is not None
+    }
+
+    avg_loading_idx = header.get("Avg Loading [%]")
+    avg_freq_idx    = header.get("Avg Frequency [Hz]")
+    flow_band_idxs  = [
+        (pct, header[name]) for pct, name in _FLOW_BANDS if name in header
+    ]
+    power_kw_idx = header.get("Rated Power [kW]")
+    power_hp_idx = header.get("Rated Power [HP]")
+
     assets = {}
     for row in ws.iter_rows(min_row=2, values_only=True):
         if row[0] is None:
             continue
-        shaft_raw    = row[5]
+
+        shaft_raw    = row[header.get("Shaft Height [mm]", 5)]
         shaft_height = int(shaft_raw) if shaft_raw and int(shaft_raw) > 0 else 0
-        assets[row[1]] = {
-            "application":  row[2],
-            "dol_vsd":      row[3],
-            "flow_control": row[4],
+
+        # Method A: direct fields.
+        avg_loading = row[avg_loading_idx] if avg_loading_idx is not None else None
+        avg_freq    = row[avg_freq_idx]    if avg_freq_idx    is not None else None
+
+        # Source priority: kW first, HP second. No conversion; value preserved as-is.
+        output_kw = None
+        for _idx in (power_kw_idx, power_hp_idx):
+            if _idx is not None and row[_idx] not in (None, ""):
+                output_kw = row[_idx]
+                break
+
+        # Method B: weighted average across hourly flow bands.
+        avg_flow = None
+        if flow_band_idxs:
+            pairs = [
+                (pct, float(row[idx]))
+                for pct, idx in flow_band_idxs
+                if row[idx] and float(row[idx]) > 0
+            ]
+            if pairs:
+                total_h  = sum(h for _, h in pairs)
+                avg_flow = sum(pct * h for pct, h in pairs) / total_h
+
+        assets[row[header.get("Customer Equipment Id", 1)]] = {
+            "application":  row[header.get("Driven Load",              2)],
+            "dol_vsd":      row[header.get("Dol Vsd",                  3)],
+            "flow_control": row[header.get("Flow Control",             4)],
             "shaft_height": shaft_height,
-            "output_kw":    row[6],
-            "run_hours":    row[8],
-            "ie_class":     row[9],
-            "avg_loading":  row[15],
-            "avg_freq":     row[16],
+            "output_kw":    output_kw,
+            "run_hours":    row[header.get("Annual Running Hours [h]", 8)],
+            "ie_class":     row[header.get("IE Eff Class",             9)],
+            "avg_loading":  avg_loading,
+            "avg_flow":     avg_flow,
+            "avg_freq":     avg_freq,
         }
     return assets
 
@@ -218,11 +280,10 @@ def load_all_zips(zip_paths):
     """
     Extract and combine data from one or more zip files.
     Returns (assessment_list, input_assets_dict).
-    Assets are re-numbered sequentially across all zips.
+    Assets are numbered 1..N across all zips.
     """
     all_assessment  = []
     all_input_assets = {}
-    running_offset  = 0
 
     tmp_dirs = []
     try:
@@ -250,10 +311,10 @@ def load_all_zips(zip_paths):
             records = read_assessment_data(assessment_path)
             assets  = read_input_assets(input_path)
 
-            # Re-number sequentially if multiple zips
-            for rec in records:
-                rec["num"] = running_offset + rec["num"]
-            running_offset += len(records)
+            # Sequential numbers independent of source Sr. No.
+            start = len(all_assessment) + 1
+            for i, rec in enumerate(records):
+                rec["num"] = start + i
 
             all_assessment.extend(records)
             all_input_assets.update(assets)
@@ -264,6 +325,10 @@ def load_all_zips(zip_paths):
             shutil.rmtree(td, ignore_errors=True)
 
     return all_assessment, all_input_assets
+
+
+def _or_dash(v):
+    return v if v is not None else "-"
 
 
 # ---------------------------------------------------------------------------
@@ -325,8 +390,9 @@ def fill_sheet(ws, assessment, input_assets, args):
         w(r, "output_kw",    inp.get("output_kw", ""))
         w(r, "shaft_height", inp.get("shaft_height", 0))
         w(r, "run_hours",    inp.get("run_hours", ""))
-        w(r, "avg_loading",  inp.get("avg_loading", ""))
-        w(r, "avg_freq",     inp.get("avg_freq", ""))
+        w(r, "avg_loading",  _or_dash(inp.get("avg_loading") or None))
+        w(r, "avg_flow",     _or_dash(inp.get("avg_flow")))
+        w(r, "avg_freq",     _or_dash(inp.get("avg_freq") or None))
         w(r, "ess_motor",    asset["ess_motor"])
         w(r, "ess_drive",    asset["ess_drive"])
 
