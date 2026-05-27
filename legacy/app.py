@@ -11,12 +11,13 @@ import os
 import re
 import sys
 import glob
+import json
 import tempfile
 import traceback
 import subprocess
 import zipfile as zipf
 from flask import Flask, request, send_file, render_template, jsonify
-from fill_saving_calculations import run_fill
+from fill_saving_calculations import run_fill, run_fill_multi
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB
@@ -198,6 +199,126 @@ def generate():
                 print(f"WARNING: report script succeeded but no .docx found. stdout:\n{result.stdout}")
 
         # ── Excel only ──────────────────────────────────────────────────────
+        return send_file(
+            excel_out,
+            as_attachment=True,
+            download_name=out_name,
+            mimetype=(
+                "application/vnd.openxmlformats-officedocument"
+                ".spreadsheetml.sheet"
+            ),
+        )
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/generate_multi", methods=["POST"])
+def generate_multi():
+    """Multi-sheet endpoint: one Saving Calculations tab per sheet spec."""
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        # ── Template ─────────────────────────────────────────────────────
+        template_key = request.form.get("template_key", "")
+        if template_key in BUNDLED:
+            template_path = os.path.join(EXCEL_TMPL_DIR,
+                                         BUNDLED[template_key]["file"])
+        else:
+            f = request.files.get("template_file")
+            if not f or not f.filename:
+                return jsonify({"error": "No template selected."}), 400
+            template_path = os.path.join(tmp_dir, f.filename)
+            f.save(template_path)
+
+        # ── ZIP pool — save once per filename, shared across all sheets ──
+        zip_pool = {}
+        for z in request.files.getlist("zip_files"):
+            if z.filename and z.filename not in zip_pool:
+                p = os.path.join(tmp_dir, z.filename)
+                z.save(p)
+                zip_pool[z.filename] = p
+
+        # ── Parse sheet specs ─────────────────────────────────────────────
+        raw = request.form.get("sheet_specs", "").strip()
+        if not raw:
+            return jsonify({"error": "sheet_specs is required."}), 400
+        try:
+            specs_json = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            return jsonify({"error": f"Invalid sheet_specs JSON: {exc}"}), 400
+
+        if not isinstance(specs_json, list) or not specs_json:
+            return jsonify({"error": "sheet_specs must be a non-empty JSON array."}), 400
+
+        # ── Validate + resolve ZIP basenames → saved absolute paths ───────
+        def _opt_float(d, key):
+            v = d.get(key)
+            try:
+                return float(v) if v is not None and str(v).strip() != "" else None
+            except (TypeError, ValueError):
+                return None
+
+        seen_names  = set()
+        sheet_specs = []
+
+        for i, s in enumerate(specs_json, start=1):
+            name = (s.get("name") or "").strip()
+            if not name:
+                return jsonify({"error": f"Sheet {i}: name is empty."}), 400
+            if len(name) > 31:
+                return jsonify(
+                    {"error": f"Sheet {i} ('{name}'): name exceeds 31 characters."}
+                ), 400
+            if name in seen_names:
+                return jsonify({"error": f"Duplicate sheet name: '{name}'."}), 400
+            seen_names.add(name)
+
+            zip_names = s.get("zips") or []
+            if not zip_names:
+                return jsonify({"error": f"Sheet '{name}': no ZIPs assigned."}), 400
+
+            zip_paths = []
+            for zname in zip_names:
+                if zname not in zip_pool:
+                    return jsonify(
+                        {"error": f"Sheet '{name}': ZIP '{zname}' was not uploaded."}
+                    ), 400
+                zip_paths.append(zip_pool[zname])
+
+            sheet_specs.append({
+                "name":     name,
+                "zips":     zip_paths,
+                "currency": (s.get("currency") or "").strip() or None,
+                "tariff":   _opt_float(s, "tariff"),
+                "co2":      _opt_float(s, "co2"),
+                "tax":      _opt_float(s, "tax"),
+                "discount": _opt_float(s, "discount"),
+            })
+
+        # ── Output filename ───────────────────────────────────────────────
+        out_name = (request.form.get("output_name") or "").strip()
+        if not out_name:
+            base = os.path.splitext(
+                BUNDLED[template_key]["file"] if template_key in BUNDLED
+                else os.path.basename(template_path)
+            )[0]
+            out_name = f"{base}_filled"
+        if not out_name.lower().endswith(".xlsx"):
+            out_name += ".xlsx"
+
+        excel_out = os.path.join(tmp_dir, out_name)
+
+        # ── Fill ──────────────────────────────────────────────────────────
+        sheet_names, asset_counts = run_fill_multi(
+            template_path, sheet_specs, excel_out,
+        )
+
+        print(f"\n{'='*60}")
+        print(f"Multi-sheet output : {out_name}")
+        for sname, cnt in asset_counts.items():
+            print(f"  '{sname}' : {cnt} assets")
+
         return send_file(
             excel_out,
             as_attachment=True,

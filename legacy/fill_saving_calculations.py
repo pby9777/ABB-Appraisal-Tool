@@ -570,3 +570,65 @@ def run_fill(template_path, zip_paths, output_path,
         fill_sheet(ws, assessment, input_assets, args)
     wb.save(output_path)
     return len(assessment), [ws.title for ws in sheets]
+
+
+def run_fill_multi(template_path, sheet_specs, output_path):
+    """
+    Build a workbook with one Saving Calculations sheet per spec.
+    The original master template sheet is removed after all copies are created.
+
+    sheet_specs — list of dicts, each:
+        {
+            "name":     str,           # tab title; max 31 chars, must be unique
+            "zips":     [path, ...],   # absolute paths to the ZIP files for this sheet
+            "currency": str  | None,
+            "tariff":   float | None,
+            "co2":      float | None,
+            "tax":      float | None,
+            "discount": float | None,
+        }
+
+    Returns (sheet_names, asset_counts):
+        sheet_names  — list[str] of created tab titles, in spec order
+        asset_counts — dict {sheet_name: int}
+    """
+    wb        = openpyxl.load_workbook(template_path)
+    master_ws = find_saving_sheets(wb)[0]
+
+    print(f"\n  Template : {os.path.basename(template_path)}")
+    print(f"  Master   : '{master_ws.title}'")
+    print(f"  Sheets   : {len(sheet_specs)}\n")
+
+    sheet_names  = []
+    asset_counts = {}
+
+    for spec in sheet_specs:
+        tab_name = spec["name"]
+
+        # Copy master — preserves all formatting, formulas, conditional
+        # formatting, merged cells, and named ranges in the template.
+        new_ws       = wb.copy_worksheet(master_ws)
+        new_ws.title = tab_name
+
+        print(f"  → '{tab_name}'")
+        assessment, input_assets = load_all_zips(spec["zips"])
+
+        args = _Args(
+            currency = spec.get("currency"),
+            tariff   = spec.get("tariff"),
+            co2      = spec.get("co2"),
+            tax      = spec.get("tax"),
+            discount = spec.get("discount"),
+        )
+
+        count = fill_sheet(new_ws, assessment, input_assets, args)
+        print(f"    {count} assets written")
+
+        sheet_names.append(tab_name)
+        asset_counts[tab_name] = count
+
+    # Remove the blank master sheet now that all named copies exist.
+    del wb[master_ws.title]
+
+    wb.save(output_path)
+    return sheet_names, asset_counts
