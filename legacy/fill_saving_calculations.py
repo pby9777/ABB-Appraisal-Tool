@@ -71,6 +71,7 @@ CANONICAL_HEADERS = {
     "run_hours":    ["Annual Running Hours", "Running Hours",
                      "Annual Running Hours [h]"],
     "avg_loading":  ["Average Loading (%)"],
+    "motor_eff":    ["Motor Efficiency [%]"],
     "avg_flow":     ["Average Flow (%)"],
     "avg_freq":     ["Average Freqency (Hz)"],
     "ess_motor":    ["Recommended ESS motor", "Recommended ESS Motor"],
@@ -230,6 +231,11 @@ def read_input_assets(path):
     power_kw_idx = header.get("Rated Power [kW]")
     power_hp_idx = header.get("Rated Power [HP]")
 
+    ie_class_idx  = header.get("IE Eff Class")
+    motor_eff_idx = header.get("Motor Efficiency [%]")
+    # HP/NEMA sources carry Motor Efficiency [%] instead of IE Eff Class.
+    is_hp_variant = motor_eff_idx is not None and ie_class_idx is None
+
     assets = {}
     for row in ws.iter_rows(min_row=2, values_only=True):
         if row[0] is None:
@@ -268,7 +274,9 @@ def read_input_assets(path):
             "shaft_height": shaft_height,
             "output_kw":    output_kw,
             "run_hours":    row[header.get("Annual Running Hours [h]", 8)],
-            "ie_class":     row[header.get("IE Eff Class",             9)],
+            "ie_class":     None if is_hp_variant
+                            else (row[ie_class_idx] if ie_class_idx is not None else None),
+            "motor_eff":    row[motor_eff_idx] if motor_eff_idx is not None else None,
             "avg_loading":  avg_loading,
             "avg_flow":     avg_flow,
             "avg_freq":     avg_freq,
@@ -384,7 +392,11 @@ def fill_sheet(ws, assessment, input_assets, args):
         w(r, "energy_kwh",   asset["energy_kwh"])
         w(r, "savings_kwh",  asset["savings_kwh"])
         w(r, "investment",   asset["investment"])
-        w(r, "ie_class",     inp.get("ie_class", ""))
+        ie_val = inp.get("ie_class")
+        w(r, "ie_class",     "Not known" if ie_val is None else ie_val)
+        motor_eff_val = inp.get("motor_eff")
+        if motor_eff_val is not None:
+            w(r, "motor_eff", motor_eff_val)
         w(r, "dol_vsd",      inp.get("dol_vsd", ""))
         w(r, "flow_control", inp.get("flow_control", ""))
         w(r, "output_kw",    inp.get("output_kw", ""))
