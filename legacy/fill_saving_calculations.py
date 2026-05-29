@@ -679,3 +679,128 @@ def run_fill_multi(template_path, sheet_specs, output_path):
 
     wb.save(output_path)
     return sheet_names, asset_counts
+
+
+# ---------------------------------------------------------------------------
+# ZIP-level multi-sheet workbook coordinator
+# ---------------------------------------------------------------------------
+
+def generate_multi_workbook(template_path, sheet_specs, output_path):
+    """
+    Build a workbook with one filled Saving_Calculations sheet per spec.
+
+    Combines ZIP-level sheet cloning (preserves Excel Tables, structured
+    references, conditional formatting and data validation) with fill_sheet().
+    This supersedes run_fill_multi() for templates where table integrity must
+    survive the copy step.
+
+    Each clone gets a workbook-unique table name suffix (_2, _3, …) so that
+    structured-reference formulas in every sheet remain valid and independent.
+    The original unfilled Saving_Calculations sheet is removed from the output.
+
+    Parameters
+    ----------
+    template_path : str
+        Path to an ABB Saving_Calculations template workbook.
+    sheet_specs : list[dict]
+        One dict per output sheet.  Recognised keys:
+            name     str            tab title  (max 31 chars, must be unique)
+            zips     list[str]      EEA tool ZIP paths for this sheet
+            currency str  | None
+            tariff   float | None   electricity tariff per kWh
+            co2      float | None   CO2 intensity in kg/kWh
+            tax      float | None   corporate tax rate as a % value (e.g. 19)
+            discount float | None   discount rate as a % value  (e.g. 6.5)
+    output_path : str
+        Destination .xlsx path.
+
+    Returns
+    -------
+    tuple[list[str], dict[str, int]]
+        (sheet_names, asset_counts)
+        sheet_names   — tab titles in spec order
+        asset_counts  — {tab_title: int} rows written per sheet
+    """
+    try:
+        from excel_clone_poc import clone_saving_calculations
+    except ImportError as exc:
+        raise RuntimeError(
+            "generate_multi_workbook requires excel_clone_poc.py to be present "
+            "in the same directory.  Import failed: " + str(exc)
+        ) from exc
+
+    if not sheet_specs:
+        raise ValueError("sheet_specs must not be empty.")
+
+    print(f"\n  Template  : {os.path.basename(template_path)}")
+    print(f"  Sheets    : {len(sheet_specs)}")
+
+    # ── Phase 1: build chained ZIP-level clones ───────────────────────────
+    # Iteration i writes one clone whose table suffix is "_{i+2}" so that
+    # every workbook-level table name remains unique regardless of N.
+    # All intermediate files are temp files; only output_path is kept.
+
+    tmp_files          = []
+    source_sheet_name  = None
+    current_src        = template_path
+
+    try:
+        for i, spec in enumerate(sheet_specs):
+            is_last   = (i == len(sheet_specs) - 1)
+            next_path = output_path if is_last else _make_tempfile(".xlsx")
+            if not is_last:
+                tmp_files.append(next_path)
+
+            diag = clone_saving_calculations(
+                current_src,
+                next_path,
+                clone_display_name=spec["name"],
+                clone_suffix=f"_{i + 2}",
+            )
+
+            if source_sheet_name is None:
+                source_sheet_name = diag["source_sheet_name"]
+
+            current_src = next_path
+            print(f"  Cloned  → {spec['name']!r}  "
+                  f"(table={diag['new_main_table_name']!r}  "
+                  f"SR={diag['sr_in_clone']})")
+
+    finally:
+        for tf in tmp_files:
+            try:
+                os.unlink(tf)
+            except OSError:
+                pass
+
+    # ── Phase 2: fill each cloned sheet ──────────────────────────────────
+    wb = openpyxl.load_workbook(output_path, data_only=False)
+
+    sheet_names  = []
+    asset_counts = {}
+
+    for spec in sheet_specs:
+        tab        = spec["name"]
+        assumptions = {k: spec.get(k)
+                       for k in ("currency", "tariff", "co2", "tax", "discount")}
+        print(f"\n  → '{tab}'")
+        count = fill_sheet(wb, tab, spec["zips"], assumptions)
+        print(f"    {count} assets written")
+        sheet_names.append(tab)
+        asset_counts[tab] = count
+
+    # ── Phase 3: remove the original unfilled source sheet ───────────────
+    if source_sheet_name and source_sheet_name in wb.sheetnames:
+        del wb[source_sheet_name]
+        print(f"\n  Removed original sheet: {source_sheet_name!r}")
+
+    wb.save(output_path)
+    print(f"\n  Saved → {output_path}")
+    return sheet_names, asset_counts
+
+
+def _make_tempfile(suffix=""):
+    """Create a named temp file and return its path (caller is responsible for deletion)."""
+    fd, path = tempfile.mkstemp(suffix=suffix, prefix="gmw_")
+    os.close(fd)
+    return path
