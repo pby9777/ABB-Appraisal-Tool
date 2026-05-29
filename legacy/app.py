@@ -17,7 +17,7 @@ import traceback
 import subprocess
 import zipfile as zipf
 from flask import Flask, request, send_file, render_template, jsonify
-from fill_saving_calculations import run_fill, run_fill_multi
+from fill_saving_calculations import run_fill, run_fill_multi, generate_multi_workbook
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB
@@ -310,7 +310,7 @@ def generate_multi():
         excel_out = os.path.join(tmp_dir, out_name)
 
         # ── Fill ──────────────────────────────────────────────────────────
-        sheet_names, asset_counts = run_fill_multi(
+        sheet_names, asset_counts = generate_multi_workbook(
             template_path, sheet_specs, excel_out,
         )
 
