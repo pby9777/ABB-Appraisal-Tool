@@ -229,7 +229,8 @@ def read_input_assets(path):
         (pct, header[name]) for pct, name in _FLOW_BANDS if name in header
     ]
     power_kw_idx = header.get("Rated Power [kW]")
-    power_hp_idx = header.get("Rated Power [HP]")
+    _hp_key      = next((k for k in header if k.lower() == "rated power [hp]"), None)
+    power_hp_idx = header[_hp_key] if _hp_key is not None else None
 
     ie_class_idx  = header.get("IE Eff Class")
     motor_eff_idx = header.get("Motor Efficiency [%]")
@@ -248,9 +249,10 @@ def read_input_assets(path):
         avg_loading = row[avg_loading_idx] if avg_loading_idx is not None else None
         avg_freq    = row[avg_freq_idx]    if avg_freq_idx    is not None else None
 
-        # Source priority: kW first, HP second. No conversion; value preserved as-is.
+        # HP/NEMA: prefer HP column; IEC: prefer kW column. No conversion.
         output_kw = None
-        for _idx in (power_kw_idx, power_hp_idx):
+        _power_order = (power_hp_idx, power_kw_idx) if is_hp_variant else (power_kw_idx, power_hp_idx)
+        for _idx in _power_order:
             if _idx is not None and row[_idx] not in (None, ""):
                 output_kw = row[_idx]
                 break
