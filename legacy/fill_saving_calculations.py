@@ -340,10 +340,10 @@ def _or_dash(v):
 
 
 # ---------------------------------------------------------------------------
-# Fill one sheet
+# Fill one sheet (internal implementation)
 # ---------------------------------------------------------------------------
 
-def fill_sheet(ws, assessment, input_assets, args):
+def _fill_ws(ws, assessment, input_assets, args):
     header_row  = find_header_row(ws)
     data_start  = header_row + 1
     col_map     = build_col_map(ws, header_row)
@@ -412,6 +412,53 @@ def fill_sheet(ws, assessment, input_assets, args):
 
 
 # ---------------------------------------------------------------------------
+# Public API — fill a named sheet from zip files
+# ---------------------------------------------------------------------------
+
+def fill_sheet(workbook, worksheet_name, zip_files, assumptions):
+    """
+    Fill a named Saving_Calculations sheet in an already-open workbook.
+
+    This is the primary public entry point for populating a specific sheet
+    by name, independent of all other sheets in the workbook.  It handles
+    zip loading and assumption conversion internally so callers only need to
+    supply the four top-level inputs.
+
+    Parameters
+    ----------
+    workbook       : openpyxl.Workbook  — open workbook object (e.g. from a
+                                          ZIP-level clone or load_workbook)
+    worksheet_name : str                — exact sheet tab name to fill
+    zip_files      : list[str]          — paths to EEA tool output ZIP files
+    assumptions    : dict               — optional overrides; recognised keys:
+                                           currency (str)
+                                           tariff   (float, per kWh)
+                                           co2      (float, kg/kWh)
+                                           tax      (float, % value e.g. 19)
+                                           discount (float, % value e.g. 6.5)
+
+    Returns
+    -------
+    int  — number of asset rows written
+    """
+    if worksheet_name not in workbook.sheetnames:
+        raise ValueError(
+            f"Sheet {worksheet_name!r} not found in workbook.  "
+            f"Available: {workbook.sheetnames}"
+        )
+    ws = workbook[worksheet_name]
+    assessment, input_assets = load_all_zips(zip_files)
+    args = _Args(
+        currency=assumptions.get("currency"),
+        tariff  =assumptions.get("tariff"),
+        co2     =assumptions.get("co2"),
+        tax     =assumptions.get("tax"),
+        discount=assumptions.get("discount"),
+    )
+    return _fill_ws(ws, assessment, input_assets, args)
+
+
+# ---------------------------------------------------------------------------
 # Fill all saving sheets in the workbook
 # ---------------------------------------------------------------------------
 
@@ -424,7 +471,7 @@ def fill_template(template_path, assessment, input_assets, args):
 
     for ws in sheets:
         print(f"\n  → '{ws.title}'")
-        count = fill_sheet(ws, assessment, input_assets, args)
+        count = _fill_ws(ws, assessment, input_assets, args)
         print(f"    {count} assets written")
 
     if getattr(args, "output", None):
@@ -541,7 +588,7 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 
 class _Args:
-    """Simple namespace so fill_sheet() works without argparse."""
+    """Simple namespace so _fill_ws() works without argparse."""
     def __init__(self, currency=None, tariff=None, co2=None,
                  tax=None, discount=None, output=None):
         self.currency = currency
@@ -567,7 +614,7 @@ def run_fill(template_path, zip_paths, output_path,
     wb     = openpyxl.load_workbook(template_path)
     sheets = find_saving_sheets(wb)
     for ws in sheets:
-        fill_sheet(ws, assessment, input_assets, args)
+        _fill_ws(ws, assessment, input_assets, args)
     wb.save(output_path)
     return len(assessment), [ws.title for ws in sheets]
 
@@ -621,7 +668,7 @@ def run_fill_multi(template_path, sheet_specs, output_path):
             discount = spec.get("discount"),
         )
 
-        count = fill_sheet(new_ws, assessment, input_assets, args)
+        count = _fill_ws(new_ws, assessment, input_assets, args)
         print(f"    {count} assets written")
 
         sheet_names.append(tab_name)
