@@ -41,12 +41,24 @@ REL_DRAWING = (
 REL_VMLDRAWING = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing"
 )
+REL_CHART = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+)
+REL_IMAGE = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+)
 
 CT_WORKSHEET = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
 )
 CT_TABLE = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"
+)
+CT_DRAWING = (
+    "application/vnd.openxmlformats-officedocument.drawing+xml"
+)
+CT_CHART = (
+    "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
 )
 
 CLONE_SUFFIX = "_2"
@@ -201,6 +213,141 @@ def _max_sheet_id(wb_xml: bytes) -> int:
     return max(nums) if nums else 0
 
 
+def _max_drawing_cnvpr_id(parts: dict) -> int:
+    """
+    Highest cNvPr id= across all drawing XML parts (workbook-unique per ECMA-376 §20.1.2.2.8).
+    Must be called before the new drawing part is registered in parts.
+    """
+    ids = []
+    for name, data in parts.items():
+        if re.match(r"xl/drawings/drawing\d+\.xml$", name):
+            ids.extend(int(x) for x in re.findall(rb'<[a-zA-Z:]+cNvPr\s+id="(\d+)"', data))
+    return max(ids) if ids else 0
+
+
+def _renumber_drawing_ids(data: bytes, start_id: int) -> bytes:
+    """
+    Patch a cloned drawing XML to satisfy the workbook-unique cNvPr id= constraint:
+      1. Strip <a:extLst> blocks that are direct children of cNvPr elements.
+         These contain a16:creationId GUIDs which must also be unique per object;
+         Excel regenerates them on first save — stripping is safe.
+      2. Renumber every cNvPr id= sequentially starting at start_id.
+    Anchors, twoCellAnchor positions, chart r:id values and image r:embed
+    values are NOT touched.
+    """
+    # Strip a16:creationId extLst from cNvPr elements only.
+    # Anchored to the cNvPr opening tag so extLst blocks in blipFill/spPr
+    # (a14:useLocalDpi, a14:shadowObscured) are left untouched.
+    data = re.sub(
+        rb"(<[a-zA-Z:]+cNvPr\b[^>]*>)\s*<a:extLst>.*?</a:extLst>",
+        rb"\1",
+        data,
+        flags=re.DOTALL,
+    )
+    # Renumber cNvPr id= in document order.
+    # cNvPr always has id= as its first attribute in drawing XML (OOXML convention).
+    _next = [start_id]
+    def _sub(m):
+        val = str(_next[0]).encode()
+        _next[0] += 1
+        return m.group(1) + val + m.group(3)
+    data = re.sub(rb'(<[a-zA-Z:]+cNvPr\s+id=")(\d+)(")', _sub, data)
+    return data
+
+
+def _next_drawing_num(parts: dict) -> int:
+    """Return the next available drawing number (template has drawing1–3)."""
+    nums = []
+    for name in parts:
+        m = re.match(r"xl/drawings/drawing(\d+)\.xml$", name)
+        if m:
+            nums.append(int(m.group(1)))
+    return max(nums) + 1 if nums else 1
+
+
+def _next_chart_num(parts: dict) -> int:
+    """Return the next available chart number (template has chart1–7)."""
+    nums = []
+    for name in parts:
+        m = re.match(r"xl/charts/chart(\d+)\.xml$", name)
+        if m:
+            nums.append(int(m.group(1)))
+    return max(nums) + 1 if nums else 1
+
+
+def _formula_sheet_name(display_name: str) -> str:
+    """Wrap sheet name in single quotes if it contains non-word characters."""
+    if re.search(r"[^A-Za-z0-9_]", display_name):
+        return "'" + display_name.replace("'", "''") + "'"
+    return display_name
+
+
+def _clone_chart_xml(data: bytes, old_display: str, new_display: str) -> bytes:
+    """Replace sheet-name formula references in a chart XML part."""
+    old_ref = (_formula_sheet_name(old_display) + "!").encode()
+    new_ref = (_formula_sheet_name(new_display) + "!").encode()
+    return data.replace(old_ref, new_ref)
+
+
+# drawing1.xml.rels rId → chart mapping (template-specific, verified from ZIP):
+#   rId1→chart1, rId2→chart2, rId3→chart3, rId4→chart4, rId5→chart5,
+#   rId6→image3.png, rId7→chart6, rId8→chart7, rId9→image4.png
+_DRAWING_CHART_RIDS  = ("rId1", "rId2", "rId3", "rId4", "rId5", "rId7", "rId8")
+_DRAWING_IMAGE_RELS  = [("rId6", "../media/image3.png"), ("rId9", "../media/image4.png")]
+
+
+def _build_drawing_rels(chart_base: int) -> bytes:
+    """
+    Build drawingN.xml.rels for a cloned sheet.
+    chart_base is the first chart number allocated to this clone.
+    rId ordering mirrors drawing1.xml.rels exactly.
+    """
+    REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+    c = chart_base
+    entries = [
+        f'<Relationship Id="rId1" Type="{REL_CHART}" Target="../charts/chart{c}.xml"/>',
+        f'<Relationship Id="rId2" Type="{REL_CHART}" Target="../charts/chart{c+1}.xml"/>',
+        f'<Relationship Id="rId3" Type="{REL_CHART}" Target="../charts/chart{c+2}.xml"/>',
+        f'<Relationship Id="rId4" Type="{REL_CHART}" Target="../charts/chart{c+3}.xml"/>',
+        f'<Relationship Id="rId5" Type="{REL_CHART}" Target="../charts/chart{c+4}.xml"/>',
+        f'<Relationship Id="rId6" Type="{REL_IMAGE}" Target="../media/image3.png"/>',
+        f'<Relationship Id="rId7" Type="{REL_CHART}" Target="../charts/chart{c+5}.xml"/>',
+        f'<Relationship Id="rId8" Type="{REL_CHART}" Target="../charts/chart{c+6}.xml"/>',
+        f'<Relationship Id="rId9" Type="{REL_IMAGE}" Target="../media/image4.png"/>',
+    ]
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<Relationships xmlns="{REL_NS}">'
+        + "".join(entries)
+        + "</Relationships>"
+    ).encode()
+
+
+def _inject_drawing_rel(data: bytes, new_drawing_part: str) -> bytes:
+    """
+    Append a drawing-type Relationship to a sheet _rels file.
+    Uses rId2 to match the <drawing r:id="rId2"/> element in the sheet XML.
+    """
+    new_rel = (
+        f'<Relationship Id="rId2" Type="{REL_DRAWING}" '
+        f'Target="{_zip_to_rel_target(new_drawing_part)}"/>'
+    ).encode()
+    return data.replace(b"</Relationships>", new_rel + b"</Relationships>")
+
+
+def _update_content_types_charts(
+    data: bytes, new_drawing_part: str, new_chart_parts: list
+) -> bytes:
+    """Register a new drawing part and cloned chart parts in [Content_Types].xml."""
+    def _override(part: str, ct: str) -> bytes:
+        return f'<Override PartName="/{part}" ContentType="{ct}"/>'.encode()
+
+    inserts = _override(new_drawing_part, CT_DRAWING)
+    for chart_part in new_chart_parts:
+        inserts += _override(chart_part, CT_CHART)
+    return data.replace(b"</Types>", inserts + b"</Types>")
+
+
 def _strip_xr_uids(data: bytes) -> bytes:
     """
     Remove xr*:uid="{GUID}" revision-tracking attributes.
@@ -232,10 +379,8 @@ def _clone_sheet_xml(data: bytes, old_table_name: str, new_table_name: str) -> b
     # (b) Deactivate tab so both sheets are not selected simultaneously on open
     data = data.replace(b'tabSelected="1"', b'tabSelected="0"')
 
-    # (c) Charts are hardcoded to "Saving_Calculations!" data sources; removing
-    #     the drawing reference prevents a broken drawing on the clone.
-    #     Pattern: <drawing r:id="..."/>  and  <legacyDrawing r:id="..."/>
-    data = re.sub(rb"<drawing\b[^>]*/>", b"", data)
+    # (c) Strip only the VML comment overlay; the <drawing> element is preserved
+    #     so the cloned sheet references its own drawingN.xml (injected into _rels).
     data = re.sub(rb"<legacyDrawing\b[^>]*/>", b"", data)
 
     # (d) Revision tracking GUIDs
@@ -483,6 +628,15 @@ def clone_saving_calculations(
     new_main_name = main_name + clone_suffix
     new_summ_name = summ_name + clone_suffix
 
+    # Chart/drawing allocation — must happen before any parts are mutated so
+    # _next_drawing_num / _next_chart_num scan the original part set.
+    new_drawing_num  = _next_drawing_num(parts)
+    new_chart_base   = _next_chart_num(parts)
+    new_drawing_part = f"xl/drawings/drawing{new_drawing_num}.xml"
+    new_drawing_rels_part = f"xl/drawings/_rels/drawing{new_drawing_num}.xml.rels"
+    new_chart_parts  = [f"xl/charts/chart{new_chart_base + i}.xml"      for i in range(7)]
+    new_chart_rels_parts = [f"xl/charts/_rels/chart{new_chart_base + i}.xml.rels" for i in range(7)]
+
     diag.update(
         {
             "new_sheet_part": new_sheet_part,
@@ -494,6 +648,9 @@ def clone_saving_calculations(
             "new_summ_table_id": new_summ_id,
             "new_sheet_id": new_sheet_id,
             "new_rel_id": new_rel_id,
+            "new_drawing_part": new_drawing_part,
+            "new_drawing_num": new_drawing_num,
+            "new_chart_base": new_chart_base,
         }
     )
 
@@ -504,11 +661,33 @@ def clone_saving_calculations(
         main_zip, new_table_main_part,
         summ_zip, new_table_summ_part,
     )
+    # Inject drawing relationship pointing to the new drawingN.xml
+    cloned_rels = _inject_drawing_rel(cloned_rels, new_drawing_part)
+
     cloned_main_table = _clone_main_table_xml(
         parts[main_zip], main_name, new_main_name, main_id, new_main_id
     )
     cloned_summ_table = _clone_summ_table_xml(
         parts[summ_zip], summ_name, new_summ_name, summ_id, new_summ_id
+    )
+
+    # ── Step 3b: clone chart XML parts (7 charts) ────────────────────────────
+    # chart1–7 → chartN–N+6 with formula sheet-name patched
+    cloned_charts = [
+        _clone_chart_xml(parts[f"xl/charts/chart{i+1}.xml"], sheet_display_name, clone_display_name)
+        for i in range(7)
+    ]
+    # chart _rels: verbatim copy — style/colors/themeOverride are relative shared parts
+    cloned_chart_rels = [parts[f"xl/charts/_rels/chart{i+1}.xml.rels"] for i in range(7)]
+
+    # Formula substitution count verification
+    diag["chart_formula_replacements"] = sum(
+        c.count((_formula_sheet_name(clone_display_name) + "!").encode())
+        for c in cloned_charts
+    )
+    diag["chart_old_refs_remaining"] = sum(
+        c.count((_formula_sheet_name(sheet_display_name) + "!").encode())
+        for c in cloned_charts
     )
 
     # Substitution count verification
@@ -527,6 +706,9 @@ def clone_saving_calculations(
         parts["[Content_Types].xml"],
         new_sheet_part, new_table_main_part, new_table_summ_part,
     )
+    parts["[Content_Types].xml"] = _update_content_types_charts(
+        parts["[Content_Types].xml"], new_drawing_part, new_chart_parts,
+    )
 
     # ── Step 10: delete calcChain ─────────────────────────────────────────────
     diag["calc_chain_present"] = "xl/calcChain.xml" in parts
@@ -541,7 +723,23 @@ def clone_saving_calculations(
     parts[new_table_main_part]  = cloned_main_table
     parts[new_table_summ_part]  = cloned_summ_table
 
+    # Drawing: cNvPr ids renumbered to be globally unique (ECMA-376 §20.1.2.2.8);
+    # a16:creationId GUIDs stripped (Excel regenerates on first save).
+    # Anchors, geometry and chart r:id references are preserved exactly.
+    _cnvpr_start = _max_drawing_cnvpr_id(parts) + 1
+    parts[new_drawing_part] = _renumber_drawing_ids(
+        parts["xl/drawings/drawing1.xml"], _cnvpr_start
+    )
+    diag["drawing_cnvpr_id_start"] = _cnvpr_start
+    parts[new_drawing_rels_part]  = _build_drawing_rels(new_chart_base)
+
+    # Charts: 7 patched XML parts + verbatim _rels copies
+    for i in range(7):
+        parts[new_chart_parts[i]]      = cloned_charts[i]
+        parts[new_chart_rels_parts[i]] = cloned_chart_rels[i]
+
     diag["new_sheet_rels_part"] = new_sheet_rels_part
+    diag["parts_in_output"]     = len(parts)   # updated after registration
 
     # ── Write output ZIP ─────────────────────────────────────────────────────
     buf = io.BytesIO()
@@ -600,6 +798,14 @@ def _print_report(diag: dict) -> None:
     print(f"  Old name '[' in source       : {src}")
     print(f"  New name '[' in clone        : {cln}  [{ok_a}]")
     print(f"  Old name '[' still in clone  : {old}  [{ok_b}]")
+
+    print("\n[CHART PRESERVATION]")
+    print(f"  New drawing part      : {diag['new_drawing_part']}")
+    print(f"  cNvPr id start        : {diag.get('drawing_cnvpr_id_start', 'n/a')}")
+    print(f"  New chart base number : {diag['new_chart_base']}")
+    print(f"  Chart formula patches : {diag['chart_formula_replacements']}")
+    ok_c = "PASS" if diag["chart_old_refs_remaining"] == 0 else "FAIL"
+    print(f"  Old sheet refs remain : {diag['chart_old_refs_remaining']}  [{ok_c}]")
 
     print("\n[MANIFEST]")
     print(f"  calcChain.xml deleted  : {diag['calc_chain_present']}")
