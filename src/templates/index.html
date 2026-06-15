@@ -1,0 +1,1500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ABB · Energy Appraisal Tool</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@600;700&family=Space+Mono&display=swap" rel="stylesheet"/>
+<style>
+/* ── Reset ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --red:       #FF000F;
+  --red-dark:  #CC0009;
+  --red-dim:   rgba(255,0,15,0.08);
+  --black:     #1A1A1A;
+  --grey-900:  #252525;
+  --grey-800:  #333333;
+  --grey-600:  #666666;
+  --grey-300:  #CCCCCC;
+  --grey-150:  #EBEBEB;
+  --grey-50:   #F7F7F7;
+  --white:     #FFFFFF;
+  --green:     #00854A;
+  --green-dim: rgba(0,133,74,0.08);
+  --font:      'Barlow', sans-serif;
+  --mono:      'Space Mono', monospace;
+  --cond:      'Barlow Condensed', sans-serif;
+  --radius:    3px;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--grey-50);
+  color: var(--black);
+  min-height: 100vh;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ── Header ─────────────────────────────────────────── */
+header {
+  background: var(--black);
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 32px;
+  border-bottom: 3px solid var(--red);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.logo { display: flex; align-items: center; gap: 14px; }
+
+.logo-box {
+  background: var(--red);
+  font-family: var(--cond);
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: -0.5px;
+  color: #fff;
+  padding: 4px 9px 3px;
+  border-radius: 2px;
+  line-height: 1;
+}
+
+.logo-name {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.logo-name small {
+  display: block;
+  color: var(--grey-600);
+  font-size: 11px;
+  font-weight: 300;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.header-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--grey-600);
+  border: 1px solid var(--grey-800);
+  padding: 3px 8px;
+  border-radius: 20px;
+  letter-spacing: 0.5px;
+}
+
+/* ── Page ───────────────────────────────────────────── */
+.page {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 36px 20px 80px;
+}
+
+.page-head { margin-bottom: 28px; }
+
+.page-title {
+  font-family: var(--cond);
+  font-weight: 700;
+  font-size: 30px;
+  letter-spacing: 0.2px;
+  color: var(--black);
+  line-height: 1.1;
+}
+
+.page-sub {
+  font-size: 13px;
+  color: var(--grey-600);
+  margin-top: 5px;
+}
+
+/* ── Card ───────────────────────────────────────────── */
+.card {
+  background: var(--white);
+  border: 1px solid var(--grey-150);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.card:focus-within {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px var(--red-dim);
+}
+
+.card-head {
+  padding: 14px 20px 12px;
+  border-bottom: 1px solid var(--grey-150);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.step-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--red);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.step-num.done { background: var(--green); }
+
+.card-label { font-weight: 600; font-size: 14px; }
+.card-hint  { font-size: 11px; color: var(--grey-600); margin-top: 1px; }
+
+.card-body { padding: 18px 20px; }
+
+/* ── Template Grid ──────────────────────────────────── */
+.tmpl-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.tmpl-opt { position: relative; cursor: pointer; }
+.tmpl-opt input { position: absolute; opacity: 0; width: 0; height: 0; }
+
+.tmpl-tile {
+  border: 1.5px solid var(--grey-150);
+  border-radius: var(--radius);
+  padding: 14px 12px 12px;
+  text-align: center;
+  background: var(--grey-50);
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.tmpl-opt input:checked + .tmpl-tile {
+  border-color: var(--red);
+  background: var(--red-dim);
+}
+
+.tmpl-opt:hover .tmpl-tile { border-color: #FF8080; background: #FFF9F9; }
+
+.tmpl-flag  { font-size: 26px; display: block; margin-bottom: 6px; }
+.tmpl-name  { font-weight: 600; font-size: 13px; display: block; margin-bottom: 2px; }
+.tmpl-fname { font-family: var(--mono); font-size: 9px; color: var(--grey-600); display: block; word-break: break-all; }
+
+.tick {
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: var(--red);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.tmpl-opt input:checked ~ .tick { display: flex; }
+
+.custom-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1.5px dashed var(--grey-300);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.custom-row:hover { border-color: var(--red); }
+
+.custom-row input[type="radio"] {
+  accent-color: var(--red);
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.custom-row label { font-size: 13px; color: var(--grey-600); cursor: pointer; flex: 1; }
+
+#custom-file-name { font-family: var(--mono); font-size: 10px; color: var(--grey-600); }
+
+.browse-link {
+  font-size: 12px;
+  color: var(--red);
+  text-decoration: underline;
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+/* ── Drop Zone ──────────────────────────────────────── */
+.drop-zone {
+  border: 2px dashed var(--grey-300);
+  border-radius: var(--radius);
+  padding: 28px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: var(--grey-50);
+  position: relative;
+}
+
+.drop-zone.over { border-color: var(--red); background: var(--red-dim); }
+.drop-icon { font-size: 32px; margin-bottom: 8px; display: block; }
+.drop-main { font-size: 14px; font-weight: 500; color: var(--grey-800); margin-bottom: 3px; }
+.drop-sub  { font-size: 11px; color: var(--grey-600); }
+.drop-sub b { color: var(--red); }
+
+.file-list { margin-top: 12px; display: flex; flex-direction: column; gap: 5px; }
+
+.file-pill {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--grey-50);
+  border: 1px solid var(--grey-150);
+  border-radius: 20px;
+  padding: 5px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--grey-800);
+}
+
+.pill-size { color: var(--grey-600); margin-left: 2px; }
+
+.pill-del {
+  margin-left: auto;
+  cursor: pointer;
+  color: var(--grey-300);
+  font-size: 15px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+.pill-del:hover { color: var(--red); }
+
+/* ── Assumptions ────────────────────────────────────── */
+.ass-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.field { display: flex; flex-direction: column; gap: 4px; }
+
+.field-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--grey-600);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.field-label .unit {
+  font-family: var(--mono);
+  font-size: 9px;
+  background: var(--grey-150);
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--grey-600);
+  font-weight: 400;
+}
+
+.field input,
+.field select {
+  height: 38px;
+  border: 1.5px solid var(--grey-150);
+  border-radius: var(--radius);
+  padding: 0 10px;
+  font-size: 14px;
+  font-family: var(--mono);
+  color: var(--black);
+  background: var(--white);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%;
+  -moz-appearance: textfield;
+}
+
+.field input::-webkit-outer-spin-button,
+.field input::-webkit-inner-spin-button { -webkit-appearance: none; }
+
+.field input:focus,
+.field select:focus {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px var(--red-dim);
+}
+
+.field input::placeholder { color: var(--grey-300); font-size: 12px; }
+
+/* ── Output row ─────────────────────────────────────── */
+.out-row { display: flex; gap: 10px; align-items: flex-end; }
+.out-row .field { flex: 1; }
+
+.ext-tag {
+  height: 38px;
+  padding: 0 10px;
+  background: var(--grey-50);
+  border: 1.5px solid var(--grey-150);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--grey-600);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ── Generate Button ────────────────────────────────── */
+.gen-btn {
+  width: 100%;
+  height: 48px;
+  background: var(--red);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--cond);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 14px;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.gen-btn:hover:not(:disabled) { background: var(--red-dark); }
+.gen-btn:active:not(:disabled) { transform: scale(0.99); }
+.gen-btn:disabled { background: var(--grey-300); cursor: not-allowed; }
+
+.spinner {
+  width: 17px; height: 17px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  display: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Progress bar ───────────────────────────────────── */
+.prog-wrap {
+  height: 3px;
+  background: var(--grey-150);
+  border-radius: 2px;
+  margin-top: 10px;
+  overflow: hidden;
+  display: none;
+}
+.prog-bar {
+  height: 100%;
+  background: var(--red);
+  animation: prog 1.8s ease-in-out infinite;
+}
+@keyframes prog {
+  0%   { width: 0%;   margin-left: 0; }
+  50%  { width: 55%;  margin-left: 25%; }
+  100% { width: 0%;   margin-left: 100%; }
+}
+
+/* ── Banners ────────────────────────────────────────── */
+.banner {
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-top: 14px;
+  display: none;
+  gap: 12px;
+  align-items: flex-start;
+  animation: fadeUp 0.25s ease;
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.banner.success { background: var(--green-dim); border: 1.5px solid var(--green); }
+.banner.error   { background: var(--red-dim);   border: 1.5px solid var(--red);   }
+.banner-icon    { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+.banner-body    { flex: 1; }
+.b-title        { font-weight: 600; font-size: 14px; }
+.banner.success .b-title { color: var(--green); }
+.banner.error   .b-title { color: var(--red);   }
+.b-detail       { font-family: var(--mono); font-size: 11px; color: var(--grey-600); margin-top: 3px; }
+
+.dl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 8px 18px;
+  background: var(--green);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--cond);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-decoration: none;
+  transition: opacity 0.15s;
+}
+.dl-btn:hover { opacity: 0.85; }
+
+/* ── Footer ─────────────────────────────────────────── */
+footer {
+  background: var(--black);
+  color: var(--grey-600);
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 14px;
+  letter-spacing: 0.4px;
+}
+footer b { color: var(--red); }
+
+/* ── Report toggle row ──────────────────────────────── */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0 16px;
+  border-bottom: 1px solid var(--grey-150);
+  margin-bottom: 16px;
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-row input[type=checkbox] { display: none; }
+.toggle-switch {
+  width: 40px; height: 22px;
+  background: var(--grey-300);
+  border-radius: 11px;
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  left: 3px; top: 3px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.toggle-row.active .toggle-switch { background: var(--red); }
+.toggle-row.active .toggle-switch::after { transform: translateX(18px); }
+.toggle-label { font-weight: 600; font-size: 14px; }
+.toggle-sub   { font-size: 12px; color: var(--grey-600); margin-top: 1px; }
+
+/* ── Report detail fields ───────────────────────────── */
+.rpt-fields { display: none; }
+.rpt-fields.visible { display: block; }
+
+.rpt-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 20px;
+}
+
+.rpt-note {
+  font-size: 11px;
+  color: var(--grey-600);
+  font-family: var(--mono);
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: var(--grey-50);
+  border-left: 3px solid var(--grey-300);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+/* ── Mode toggle bar ───────────────────────────────────────── */
+.mode-bar {
+  display: flex;
+  border: 1.5px solid var(--grey-150);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 16px;
+  background: var(--white);
+}
+.mode-btn {
+  flex: 1; height: 40px; border: none; background: none;
+  font-family: var(--font); font-size: 13px; font-weight: 500;
+  cursor: pointer; color: var(--grey-600);
+  transition: background 0.15s, color 0.15s;
+}
+.mode-btn + .mode-btn { border-left: 1.5px solid var(--grey-150); }
+.mode-btn.active { background: var(--red); color: var(--white); font-weight: 600; }
+.mode-btn:not(.active):hover { background: var(--grey-50); color: var(--black); }
+
+/* ── Multi-sheet builder ───────────────────────────────────── */
+.add-sheet-btn {
+  height: 32px; padding: 0 14px; background: var(--black); color: var(--white);
+  border: none; border-radius: var(--radius); font-family: var(--font);
+  font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  transition: background 0.15s; flex-shrink: 0; margin-left: auto;
+}
+.add-sheet-btn:hover { background: var(--grey-800); }
+
+.sheet-card {
+  border: 1.5px solid var(--grey-150); border-radius: var(--radius);
+  margin-bottom: 12px; overflow: hidden; background: var(--white);
+}
+.sheet-card:last-child { margin-bottom: 0; }
+
+.sc-head {
+  background: var(--grey-50); border-bottom: 1px solid var(--grey-150);
+  padding: 10px 14px; display: flex; align-items: center; gap: 10px;
+}
+.sc-num-badge {
+  width: 22px; height: 22px; border-radius: 50%; background: var(--grey-300);
+  color: var(--white); font-family: var(--mono); font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.sc-name {
+  flex: 1; height: 34px; border: 1.5px solid var(--grey-150);
+  border-radius: var(--radius); padding: 0 10px; font-size: 13px;
+  font-family: var(--font); color: var(--black); background: var(--white);
+  outline: none; transition: border-color 0.15s, box-shadow 0.15s; min-width: 0;
+}
+.sc-name:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-dim); }
+.sc-name::placeholder { color: var(--grey-300); }
+.sc-btns { display: flex; gap: 6px; flex-shrink: 0; }
+.sc-action-btn {
+  height: 30px; padding: 0 10px; border: 1.5px solid var(--grey-150);
+  border-radius: var(--radius); background: var(--white); font-size: 12px;
+  color: var(--grey-600); cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.sc-action-btn:hover  { border-color: var(--grey-300); color: var(--black); }
+.sc-del-btn:hover     { border-color: var(--red); color: var(--red); }
+.sc-action-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.sc-body { padding: 14px; }
+.sc-section-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.8px; color: var(--grey-600); margin-bottom: 8px;
+}
+.sc-zip-list {
+  display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px;
+  border: 1.5px solid var(--grey-150); border-radius: var(--radius);
+  background: var(--grey-50); min-height: 42px; align-items: center;
+}
+.sc-zip-empty { font-size: 11px; color: var(--grey-300); font-family: var(--mono); }
+.zip-check-label {
+  display: flex; align-items: center; gap: 6px; background: var(--white);
+  border: 1.5px solid var(--grey-150); border-radius: 20px; padding: 4px 10px;
+  cursor: pointer; font-size: 11px; font-family: var(--mono); color: var(--grey-800);
+  transition: all 0.15s; user-select: none;
+}
+.zip-check-label:hover { border-color: var(--grey-300); }
+.zip-check-label input[type=checkbox] {
+  accent-color: var(--red); width: 13px; height: 13px; flex-shrink: 0;
+}
+.zip-check-label:has(input:checked) {
+  border-color: var(--red); background: var(--red-dim); color: var(--black);
+}
+.sc-divider { height: 1px; background: var(--grey-150); margin: 14px 0; }
+.sheet-card.sc-err {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px var(--red-dim);
+}
+
+/* ── Responsive ─────────────────────────────────────── */
+@media (max-width: 560px) {
+  .tmpl-grid { grid-template-columns: 1fr 1fr; }
+  .ass-grid  { grid-template-columns: 1fr; }
+  .rpt-grid  { grid-template-columns: 1fr; }
+  .page      { padding: 20px 14px 60px; }
+  header     { padding: 0 16px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="logo">
+    <div class="logo-box">ABB</div>
+    <div class="logo-name">
+      Motion Services
+      <small>Energy Appraisal</small>
+    </div>
+  </div>
+  <div class="header-tag">ENERGY APPRAISAL TOOL</div>
+</header>
+
+<!-- Page -->
+<div class="page">
+  <div class="page-head">
+    <h1 class="page-title">ABB Energy Appraisal Tool</h1>
+    <p class="page-sub">Fill Excel template · Optionally generate Word report · Download both as a ZIP</p>
+  </div>
+
+  <form id="mainForm" enctype="multipart/form-data">
+
+    <!-- Mode toggle -->
+    <div class="mode-bar">
+      <button type="button" class="mode-btn active" id="mode-single"
+              onclick="setMode('single')">Single Sheet</button>
+      <button type="button" class="mode-btn" id="mode-multi"
+              onclick="setMode('multi')">⊞ Multi Sheet</button>
+    </div>
+
+    <!-- Step 1 — Template -->
+    <div class="card">
+      <div class="card-head">
+        <div class="step-num" id="sn1">1</div>
+        <div>
+          <div class="card-label">Select Template</div>
+          <div class="card-hint">Choose a bundled regional template or upload a custom one</div>
+        </div>
+      </div>
+      <div class="card-body">
+
+        <div class="tmpl-grid">
+          {% for key, info in bundled.items() %}
+          <label class="tmpl-opt">
+            <input type="radio" name="template_key" value="{{ key }}"
+                   {% if loop.first %}checked{% endif %}
+                   onchange="onTmplChange('{{ key }}')"/>
+            <div class="tmpl-tile">
+              <span class="tmpl-flag">{{ info.flag }}</span>
+              <span class="tmpl-name">{{ info.label }}</span>
+              <span class="tmpl-fname">{{ info.file }}</span>
+            </div>
+            <div class="tick">✓</div>
+          </label>
+          {% endfor %}
+        </div>
+
+        <div class="custom-row" onclick="document.getElementById('r-custom').click()">
+          <input type="radio" name="template_key" value="custom" id="r-custom"
+                 onchange="onTmplChange('custom')"/>
+          <label for="r-custom">Upload custom template</label>
+          <span id="custom-file-name">no file chosen</span>
+          <span class="browse-link" onclick="event.stopPropagation();pickCustom()">Browse</span>
+        </div>
+        <input type="file" id="custom-file-input" name="template_file" accept=".xlsx"
+               onchange="onCustomChosen(this)" style="display:none"/>
+      </div>
+    </div>
+
+    <div id="single-steps">
+
+    <!-- Step 2 — Zip Files -->
+    <div class="card">
+      <div class="card-head">
+        <div class="step-num" id="sn2">2</div>
+        <div>
+          <div class="card-label">Upload Tool Output Zip(s)</div>
+          <div class="card-hint">Drop one or multiple zips — assets are combined automatically</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="drop-zone" id="dropZone"
+             onclick="document.getElementById('zip-input').click()"
+             ondragover="onDragOver(event)"
+             ondragleave="onDragLeave(event)"
+             ondrop="onDrop(event)">
+          <span class="drop-icon">📦</span>
+          <div class="drop-main">Drop zip file(s) here or click to browse</div>
+          <div class="drop-sub">Accepts <b>.zip</b> files &nbsp;·&nbsp; <b>Multiple files supported</b> for large projects</div>
+        </div>
+        <input type="file" id="zip-input" name="zip_files" accept=".zip" multiple
+               onchange="onZipChosen(this)" style="display:none"/>
+        <div class="file-list" id="fileList"></div>
+      </div>
+    </div>
+
+    <!-- Step 3 — Assumptions -->
+    <div class="card">
+      <div class="card-head">
+        <div class="step-num" id="sn3">3</div>
+        <div>
+          <div class="card-label">Assumptions</div>
+          <div class="card-hint">Auto-filled from selected template — edit as needed</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="ass-grid">
+
+          <div class="field">
+            <span class="field-label">Currency <span class="unit">code</span></span>
+            <select name="currency" id="inp-currency">
+              <option value="INR">INR – Indian Rupee</option>
+              <option value="EUR">EUR – Euro</option>
+              <option value="USD">USD – US Dollar</option>
+              <option value="NOK">NOK – Norwegian Krone</option>
+              <option value="SGD">SGD – Singapore Dollar</option>
+              <option value="SAR">SAR – Saudi Riyal</option>
+              <option value="GBP">GBP – British Pound</option>
+              <option value="AED">AED – UAE Dirham</option>
+              <option value="SEK">SEK – Swedish Krona</option>
+              <option value="DKK">DKK – Danish Krone</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <span class="field-label">Electricity Tariff <span class="unit">per kWh</span></span>
+            <input type="number" name="tariff" id="inp-tariff" step="0.001" placeholder="e.g. 0.14"/>
+          </div>
+
+          <div class="field">
+            <span class="field-label">CO₂ Intensity <span class="unit">kg/kWh</span></span>
+            <input type="number" name="co2" id="inp-co2" step="0.001" placeholder="e.g. 0.75"/>
+          </div>
+
+          <div class="field">
+            <span class="field-label">Tax Rate <span class="unit">enter as %</span></span>
+            <input type="number" name="tax" id="inp-tax" step="0.1" placeholder="e.g. 19"/>
+          </div>
+
+          <div class="field">
+            <span class="field-label">Discount Rate <span class="unit">enter as %</span></span>
+            <input type="number" name="discount" id="inp-discount" step="0.1" placeholder="e.g. 6.5"/>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 4 — Word Report -->
+    <div class="card">
+      <div class="card-head">
+        <div class="step-num" id="sn4">4</div>
+        <div>
+          <div class="card-label">Word Report (Optional)</div>
+          <div class="card-hint">Also generate the EA Word report from the filled Excel</div>
+        </div>
+      </div>
+      <div class="card-body">
+
+        <!-- Toggle -->
+        <label class="toggle-row" id="rptToggleRow" onclick="toggleReport()">
+          <input type="checkbox" name="gen_report" id="chk-report" value="1"/>
+          <div class="toggle-switch"></div>
+          <div>
+            <div class="toggle-label">Generate Word Report</div>
+            <div class="toggle-sub">Creates an EA Report .docx alongside the filled Excel</div>
+          </div>
+        </label>
+
+        <!-- Report detail fields (shown when toggle is on) -->
+        <div class="rpt-fields" id="rptFields">
+          <div class="rpt-grid">
+
+            <div class="field">
+              <span class="field-label">Customer Name <span class="unit">required</span></span>
+              <input type="text" name="customer" id="inp-customer"
+                     placeholder="e.g. SAIPOL"/>
+            </div>
+
+            <div class="field">
+              <span class="field-label">Plant / Site <span class="unit">required</span></span>
+              <input type="text" name="plant" id="inp-plant"
+                     placeholder="e.g. Lezoux"/>
+            </div>
+
+            <div class="field">
+              <span class="field-label">Report Date <span class="unit">optional</span></span>
+              <input type="text" name="rpt_date" id="inp-rpt-date"
+                     placeholder="MM.DD.YYYY — leave blank for today"/>
+            </div>
+
+            <div class="field">
+              <span class="field-label">Report Region <span class="unit">auto from template</span></span>
+              <select name="report_type" id="inp-report-type">
+                <option value="">— auto (matches selected template) —</option>
+                <option value="standard">Standard (Global)</option>
+                <option value="cee">France / CEE</option>
+                <option value="poland">Poland</option>
+                <option value="xlatam">XLatam</option>
+              </select>
+            </div>
+
+          </div>
+          <div class="rpt-note">
+            Output will be a <b>.zip</b> containing the filled Excel + the Word report.
+            Customer name and Plant are used as the report title and output filename.
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    </div><!-- /#single-steps -->
+
+    <!-- Multi-sheet builder (visible in Multi Sheet mode) -->
+    <div id="multi-steps" style="display:none">
+
+      <!-- ZIP Pool -->
+      <div class="card">
+        <div class="card-head">
+          <div class="step-num">2</div>
+          <div>
+            <div class="card-label">ZIP Pool</div>
+            <div class="card-hint">Upload all ZIPs once — assign each to one or more sheets below</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="drop-zone" id="pool-drop-zone"
+               onclick="document.getElementById('pool-zip-input').click()"
+               ondragover="onPoolDragOver(event)"
+               ondragleave="onPoolDragLeave(event)"
+               ondrop="onPoolDrop(event)">
+            <span class="drop-icon">📦</span>
+            <div class="drop-main">Drop zip file(s) here or click to browse</div>
+            <div class="drop-sub">Shared across all sheets — <b>upload once, assign many times</b></div>
+          </div>
+          <input type="file" id="pool-zip-input" accept=".zip" multiple
+                 onchange="onPoolZipChosen(this)" style="display:none"/>
+          <div class="file-list" id="poolFileList"></div>
+        </div>
+      </div>
+
+      <!-- Sheet Builder -->
+      <div class="card">
+        <div class="card-head">
+          <div class="step-num">3</div>
+          <div style="flex:1">
+            <div class="card-label">Sheet Builder</div>
+            <div class="card-hint">Each card becomes one output tab in the workbook</div>
+          </div>
+          <button type="button" class="add-sheet-btn" onclick="addSheet(null)">+ Add Sheet</button>
+        </div>
+        <div class="card-body" id="sc-container">
+          <!-- sheet cards injected by JS -->
+        </div>
+      </div>
+
+    </div><!-- /#multi-steps -->
+
+    <!-- Step 5 — Output & Generate -->
+    <div class="card">
+      <div class="card-head">
+        <div class="step-num" id="sn5">5</div>
+        <div>
+          <div class="card-label">Output File Name &amp; Generate</div>
+          <div class="card-hint">Leave blank for default name</div>
+        </div>
+      </div>
+      <div class="card-body">
+
+        <div class="out-row">
+          <div class="field">
+            <span class="field-label">File Name</span>
+            <input type="text" name="output_name" id="inp-output"
+                   placeholder="e.g. Poland_Krakow_Plant_2025"/>
+          </div>
+          <div class="ext-tag" id="extTag">.xlsx</div>
+        </div>
+
+        <button type="button" class="gen-btn" id="genBtn" onclick="generate()">
+          <div class="spinner" id="spinner"></div>
+          <span id="btnLabel">⚡ Generate Filled Excel</span>
+        </button>
+
+        <div class="prog-wrap" id="progWrap"><div class="prog-bar"></div></div>
+
+        <!-- Success -->
+        <div class="banner success" id="successBanner">
+          <div class="banner-icon">✅</div>
+          <div class="banner-body">
+            <div class="b-title" id="successTitle">Files ready</div>
+            <div class="b-detail" id="successDetail"></div>
+            <a class="dl-btn" id="dlLink" href="#" download>⬇ Download</a>
+          </div>
+        </div>
+
+        <!-- Error -->
+        <div class="banner error" id="errorBanner">
+          <div class="banner-icon">⚠️</div>
+          <div class="banner-body">
+            <div class="b-title">Error</div>
+            <div class="b-detail" id="errorDetail"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </form>
+</div>
+
+<footer>ABB Motion Services &nbsp;·&nbsp; Energy Appraisal &nbsp;·&nbsp; <b>Internal Use Only</b></footer>
+
+<script>
+  let zipFiles = new DataTransfer();           // single-sheet mode
+
+  // ── Multi-sheet state ───────────────────────────────────
+  let currentMode    = 'single';
+  let poolFiles      = new DataTransfer();
+  let sheetIdCounter = 0;
+  let sheetIds       = [];
+  let lastDefaults   = { currency: 'INR', tariff: '', co2: '', tax: '', discount: '' };
+
+  // ── Template change: pre-fill defaults ──────────────
+  function onTmplChange(key) {
+    hideBanners();
+    if (key === 'custom') return;
+    fetch(`/defaults/${key}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.currency) document.getElementById('inp-currency').value = d.currency;
+        if (d.tariff   != null) document.getElementById('inp-tariff').value   = d.tariff;
+        if (d.co2      != null) document.getElementById('inp-co2').value      = d.co2;
+        if (d.tax      != null) document.getElementById('inp-tax').value      = d.tax;
+        if (d.discount != null) document.getElementById('inp-discount').value = d.discount;
+        lastDefaults = {
+          currency: d.currency || lastDefaults.currency,
+          tariff:   d.tariff   != null ? d.tariff   : lastDefaults.tariff,
+          co2:      d.co2      != null ? d.co2      : lastDefaults.co2,
+          tax:      d.tax      != null ? d.tax      : lastDefaults.tax,
+          discount: d.discount != null ? d.discount : lastDefaults.discount,
+        };
+      });
+  }
+
+  // ── Custom template ──────────────────────────────────
+  function pickCustom() {
+    document.getElementById('custom-file-input').click();
+  }
+
+  function onCustomChosen(input) {
+    document.getElementById('custom-file-name').textContent =
+      input.files[0]?.name || 'no file chosen';
+    document.getElementById('r-custom').checked = true;
+    hideBanners();
+  }
+
+  // ── Zip drag & drop ──────────────────────────────────
+  function onDragOver(e) {
+    e.preventDefault();
+    document.getElementById('dropZone').classList.add('over');
+  }
+
+  function onDragLeave() {
+    document.getElementById('dropZone').classList.remove('over');
+  }
+
+  function onDrop(e) {
+    e.preventDefault();
+    document.getElementById('dropZone').classList.remove('over');
+    addFiles(e.dataTransfer.files);
+  }
+
+  function onZipChosen(input) {
+    addFiles(input.files);
+    input.value = '';
+  }
+
+  function addFiles(list) {
+    for (const f of list) {
+      if (!f.name.endsWith('.zip')) continue;
+      let dup = false;
+      for (const ex of zipFiles.files) { if (ex.name === f.name) { dup = true; break; } }
+      if (!dup) zipFiles.items.add(f);
+    }
+    renderPills();
+    hideBanners();
+  }
+
+  function removeFile(name) {
+    const dt = new DataTransfer();
+    for (const f of zipFiles.files) { if (f.name !== name) dt.items.add(f); }
+    zipFiles = dt;
+    renderPills();
+  }
+
+  function renderPills() {
+    const list = document.getElementById('fileList');
+    list.innerHTML = '';
+    for (const f of zipFiles.files) {
+      const mb = (f.size / 1048576).toFixed(1);
+      list.innerHTML += `
+        <div class="file-pill">
+          <span>🗜️</span>
+          <span>${f.name}</span>
+          <span class="pill-size">${mb} MB</span>
+          <span class="pill-del" onclick="removeFile('${f.name}')">×</span>
+        </div>`;
+    }
+  }
+
+  // ── Report toggle ─────────────────────────────────────
+  function toggleReport() {
+    const chk    = document.getElementById('chk-report');
+    const row    = document.getElementById('rptToggleRow');
+    const fields = document.getElementById('rptFields');
+    const ext    = document.getElementById('extTag');
+    const lbl    = document.getElementById('btnLabel');
+
+    // The click fires before the checkbox state changes, so toggle manually
+    const nowOn = !chk.checked;
+    chk.checked = nowOn;
+
+    row.classList.toggle('active', nowOn);
+    fields.classList.toggle('visible', nowOn);
+    ext.textContent = nowOn ? '.zip' : '.xlsx';
+    if (!document.getElementById('genBtn').disabled) {
+      lbl.textContent = nowOn ? '⚡ Generate Excel + Report' : '⚡ Generate Filled Excel';
+    }
+    hideBanners();
+  }
+
+  // ── Generate ─────────────────────────────────────────
+  async function generate() {
+    if (currentMode === 'multi') { await generateMulti(); return; }
+    hideBanners();
+
+    if (zipFiles.files.length === 0) {
+      showError('Please upload at least one zip file (Step 2).');
+      return;
+    }
+
+    const wantReport = document.getElementById('chk-report').checked;
+    if (wantReport) {
+      const cust  = document.getElementById('inp-customer').value.trim();
+      const plant = document.getElementById('inp-plant').value.trim();
+      if (!cust || !plant) {
+        showError('Customer Name and Plant / Site are required to generate the Word report (Step 4).');
+        return;
+      }
+    }
+
+    const formData = new FormData(document.getElementById('mainForm'));
+    // Ensure gen_report is included correctly
+    if (!wantReport) formData.set('gen_report', '0');
+    formData.delete('zip_files');
+    for (const f of zipFiles.files) formData.append('zip_files', f);
+
+    setLoading(true);
+
+    try {
+      const res = await fetch('/generate', { method: 'POST', body: formData });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Server error' }));
+        throw new Error(err.error || 'Unknown error');
+      }
+
+      const disp  = res.headers.get('Content-Disposition') || '';
+      const match = disp.match(/filename="?([^";\n]+)"?/);
+      const fname = match ? match[1] : (wantReport ? 'output.zip' : 'output_filled.xlsx');
+
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const link = document.getElementById('dlLink');
+      link.href     = url;
+      link.download = fname;
+      link.textContent = wantReport ? '⬇ Download ZIP (Excel + Report)' : '⬇ Download Excel';
+
+      const isZip = fname.endsWith('.zip');
+      document.getElementById('successTitle').textContent = isZip ? 'Excel + Report ready' : 'Excel ready';
+      document.getElementById('successDetail').textContent =
+        `${zipFiles.files.length} zip(s) processed · ${fname}`;
+      document.getElementById('successBanner').style.display = 'flex';
+      markDone('sn5');
+
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── Helpers ───────────────────────────────────────────
+  function setLoading(on) {
+    const btn  = document.getElementById('genBtn');
+    const sp   = document.getElementById('spinner');
+    const lbl  = document.getElementById('btnLabel');
+    const prog = document.getElementById('progWrap');
+    btn.disabled       = on;
+    sp.style.display   = on ? 'block' : 'none';
+    prog.style.display = on ? 'block' : 'none';
+    if (on) {
+      lbl.textContent = 'Generating…';
+    } else if (currentMode === 'multi') {
+      lbl.textContent = '⚡ Generate Multi-Sheet Workbook';
+    } else {
+      lbl.textContent = document.getElementById('chk-report').checked
+        ? '⚡ Generate Excel + Report' : '⚡ Generate Filled Excel';
+    }
+  }
+
+  function hideBanners() {
+    document.getElementById('successBanner').style.display = 'none';
+    document.getElementById('errorBanner').style.display   = 'none';
+  }
+
+  function showError(msg) {
+    document.getElementById('errorDetail').textContent = msg;
+    document.getElementById('errorBanner').style.display = 'flex';
+  }
+
+  function markDone(id) {
+    const el = document.getElementById(id);
+    if (el) { el.classList.add('done'); el.textContent = '✓'; }
+  }
+
+  // ── Mode toggle ───────────────────────────────────────
+  function setMode(mode) {
+    currentMode = mode;
+    document.getElementById('mode-single').classList.toggle('active', mode === 'single');
+    document.getElementById('mode-multi').classList.toggle('active', mode === 'multi');
+    document.getElementById('single-steps').style.display = mode === 'single' ? '' : 'none';
+    document.getElementById('multi-steps').style.display  = mode === 'multi'  ? '' : 'none';
+    if (mode === 'multi' && sheetIds.length === 0) addSheet(null);
+    const btn = document.getElementById('genBtn');
+    const lbl = document.getElementById('btnLabel');
+    btn.disabled = false;
+    lbl.textContent = mode === 'multi'
+      ? '⚡ Generate Multi-Sheet Workbook'
+      : (document.getElementById('chk-report').checked
+          ? '⚡ Generate Excel + Report' : '⚡ Generate Filled Excel');
+    hideBanners();
+  }
+
+  // ── ZIP Pool ──────────────────────────────────────────────────
+  function onPoolDragOver(e) {
+    e.preventDefault();
+    document.getElementById('pool-drop-zone').classList.add('over');
+  }
+  function onPoolDragLeave() {
+    document.getElementById('pool-drop-zone').classList.remove('over');
+  }
+  function onPoolDrop(e) {
+    e.preventDefault();
+    document.getElementById('pool-drop-zone').classList.remove('over');
+    addToPool(e.dataTransfer.files);
+  }
+  function onPoolZipChosen(input) { addToPool(input.files); input.value = ''; }
+
+  function addToPool(fileList) {
+    for (const f of fileList) {
+      if (!f.name.endsWith('.zip')) continue;
+      let dup = false;
+      for (const ex of poolFiles.files) { if (ex.name === f.name) { dup = true; break; } }
+      if (!dup) { poolFiles.items.add(f); addZipToAllCards(f.name); }
+    }
+    renderPool();
+  }
+
+  function removeFromPool(name) {
+    const dt = new DataTransfer();
+    for (const f of poolFiles.files) { if (f.name !== name) dt.items.add(f); }
+    poolFiles = dt;
+    removeZipFromAllCards(name);
+    renderPool();
+  }
+
+  function renderPool() {
+    const list = document.getElementById('poolFileList');
+    list.innerHTML = '';
+    for (const f of poolFiles.files) {
+      const mb = (f.size / 1048576).toFixed(1);
+      list.innerHTML += `<div class="file-pill">
+        <span>🗜️</span><span>${f.name}</span>
+        <span class="pill-size">${mb} MB</span>
+        <span class="pill-del" onclick="removeFromPool('${f.name}')">×</span>
+      </div>`;
+    }
+  }
+
+  // ── Sheet card management ────────────────────────────────────
+  function addSheet(fromId) {
+    sheetIdCounter++;
+    const id = sheetIdCounter;
+    sheetIds.push(id);
+    let vals = {
+      name: '', checkedZips: new Set(),
+      currency: lastDefaults.currency, tariff:   lastDefaults.tariff,
+      co2:      lastDefaults.co2,      tax:      lastDefaults.tax,
+      discount: lastDefaults.discount,
+    };
+    if (fromId != null) {
+      const src = document.getElementById(`sc-${fromId}`);
+      if (src) {
+        vals.currency = src.querySelector('.sc-currency').value;
+        vals.tariff   = src.querySelector('.sc-tariff').value;
+        vals.co2      = src.querySelector('.sc-co2').value;
+        vals.tax      = src.querySelector('.sc-tax').value;
+        vals.discount = src.querySelector('.sc-discount').value;
+        src.querySelectorAll('.zip-check:checked').forEach(cb => vals.checkedZips.add(cb.value));
+      }
+    }
+    const div = document.createElement('div');
+    div.id = `sc-${id}`; div.className = 'sheet-card';
+    div.innerHTML = buildCardHTML(id, vals);
+    document.getElementById('sc-container').appendChild(div);
+    updateCardNumbers();
+    updateRemoveButtons();
+  }
+
+  function removeSheet(id) {
+    sheetIds = sheetIds.filter(x => x !== id);
+    document.getElementById(`sc-${id}`)?.remove();
+    updateCardNumbers();
+    updateRemoveButtons();
+  }
+
+  function duplicateSheet(id) { addSheet(id); }
+
+  function updateCardNumbers() {
+    sheetIds.forEach((id, idx) => {
+      const b = document.querySelector(`#sc-${id} .sc-num-badge`);
+      if (b) b.textContent = idx + 1;
+    });
+  }
+
+  function updateRemoveButtons() {
+    document.querySelectorAll('.sc-del-btn').forEach(btn => {
+      btn.disabled = sheetIds.length <= 1;
+    });
+  }
+
+  function addZipToAllCards(name) {
+    sheetIds.forEach(id => {
+      const zl = document.getElementById(`sczips-${id}`);
+      if (!zl) return;
+      zl.querySelector('.sc-zip-empty')?.remove();
+      const lbl = document.createElement('label');
+      lbl.className = 'zip-check-label';
+      lbl.innerHTML = `<input type="checkbox" class="zip-check" value="${name}"><span>${name}</span>`;
+      zl.appendChild(lbl);
+    });
+  }
+
+  function removeZipFromAllCards(name) {
+    document.querySelectorAll('.zip-check').forEach(cb => {
+      if (cb.value === name) cb.closest('label')?.remove();
+    });
+    sheetIds.forEach(id => {
+      const zl = document.getElementById(`sczips-${id}`);
+      if (zl && !zl.querySelector('label'))
+        zl.innerHTML = '<span class="sc-zip-empty">No ZIPs in pool yet — upload above.</span>';
+    });
+  }
+
+  const CURRENCY_OPTS = [
+    ['INR','INR – Indian Rupee'],['EUR','EUR – Euro'],['USD','USD – US Dollar'],
+    ['NOK','NOK – Norwegian Krone'],['SGD','SGD – Singapore Dollar'],
+    ['SAR','SAR – Saudi Riyal'],['GBP','GBP – British Pound'],
+    ['AED','AED – UAE Dirham'],['SEK','SEK – Swedish Krona'],['DKK','DKK – Danish Krone'],
+  ];
+
+  function buildCardHTML(id, vals) {
+    const opts = CURRENCY_OPTS.map(([v, t]) =>
+      `<option value="${v}"${vals.currency === v ? ' selected' : ''}>${t}</option>`
+    ).join('');
+    const zipHTML = poolFiles.files.length === 0
+      ? '<span class="sc-zip-empty">No ZIPs in pool yet — upload above.</span>'
+      : Array.from(poolFiles.files).map(f => {
+          const chk = vals.checkedZips.has(f.name) ? ' checked' : '';
+          return `<label class="zip-check-label">
+            <input type="checkbox" class="zip-check" value="${f.name}"${chk}>
+            <span>${f.name}</span></label>`;
+        }).join('');
+    return `
+      <div class="sc-head">
+        <span class="sc-num-badge">·</span>
+        <input class="sc-name" type="text" placeholder="e.g. Site A – Pumps"
+               value="${(vals.name || '').replace(/"/g, '&quot;')}"/>
+        <div class="sc-btns">
+          <button type="button" class="sc-action-btn"
+                  onclick="duplicateSheet(${id})">⧇ Duplicate</button>
+          <button type="button" class="sc-action-btn sc-del-btn"
+                  onclick="removeSheet(${id})">✕ Remove</button>
+        </div>
+      </div>
+      <div class="sc-body">
+        <div class="sc-section-label">ASSIGN ZIPS</div>
+        <div class="sc-zip-list" id="sczips-${id}">${zipHTML}</div>
+        <div class="sc-divider"></div>
+        <div class="sc-section-label">ASSUMPTIONS</div>
+        <div class="ass-grid">
+          <div class="field">
+            <span class="field-label">Currency <span class="unit">code</span></span>
+            <select class="sc-currency">${opts}</select>
+          </div>
+          <div class="field">
+            <span class="field-label">Tariff <span class="unit">per kWh</span></span>
+            <input type="number" class="sc-tariff" step="0.001"
+                   placeholder="e.g. 0.14" value="${vals.tariff}"/>
+          </div>
+          <div class="field">
+            <span class="field-label">CO₂ <span class="unit">kg/kWh</span></span>
+            <input type="number" class="sc-co2" step="0.001"
+                   placeholder="e.g. 0.75" value="${vals.co2}"/>
+          </div>
+          <div class="field">
+            <span class="field-label">Tax <span class="unit">enter as %</span></span>
+            <input type="number" class="sc-tax" step="0.1"
+                   placeholder="e.g. 19" value="${vals.tax}"/>
+          </div>
+          <div class="field">
+            <span class="field-label">Discount <span class="unit">enter as %</span></span>
+            <input type="number" class="sc-discount" step="0.1"
+                   placeholder="e.g. 6.5" value="${vals.discount}"/>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // ── Collect + validate sheet specs from DOM ─────────────────────────
+  function collectSheetSpecs() {
+    const errors    = [];
+    const specs     = [];
+    const seenNames = new Set();
+
+    // Clear previous card-level error state
+    document.querySelectorAll('.sheet-card.sc-err')
+      .forEach(c => c.classList.remove('sc-err'));
+
+    function _num(el) {
+      const v = el.value.trim();
+      return v !== '' ? parseFloat(v) : null;
+    }
+
+    for (const id of sheetIds) {
+      const card = document.getElementById(`sc-${id}`);
+      const idx  = sheetIds.indexOf(id) + 1;
+      const name = card.querySelector('.sc-name').value.trim();
+      const zips = Array.from(card.querySelectorAll('.zip-check:checked'))
+                        .map(cb => cb.value);
+      let cardErr = false;
+
+      if (!name) {
+        errors.push(`Sheet ${idx}: a name is required.`);
+        cardErr = true;
+      } else if (name.length > 31) {
+        errors.push(`Sheet ${idx} ("${name}"): name exceeds 31 characters.`);
+        cardErr = true;
+      } else if (seenNames.has(name)) {
+        errors.push(`Duplicate sheet name: "${name}".`);
+        cardErr = true;
+      } else {
+        seenNames.add(name);
+      }
+
+      if (zips.length === 0) {
+        errors.push(`Sheet ${idx}${name ? ` ("${name}")` : ''}: select at least one ZIP.`);
+        cardErr = true;
+      }
+
+      if (cardErr) card.classList.add('sc-err');
+
+      specs.push({
+        name,
+        zips,
+        currency: card.querySelector('.sc-currency').value || null,
+        tariff:   _num(card.querySelector('.sc-tariff')),
+        co2:      _num(card.querySelector('.sc-co2')),
+        tax:      _num(card.querySelector('.sc-tax')),
+        discount: _num(card.querySelector('.sc-discount')),
+      });
+    }
+
+    return { specs, errors };
+  }
+
+  // ── Submit to /generate_multi and trigger download ────────────────────
+  async function generateMulti() {
+    hideBanners();
+
+    if (poolFiles.files.length === 0) {
+      showError('ZIP Pool is empty — upload at least one ZIP file (Step 2).');
+      return;
+    }
+
+    const { specs, errors } = collectSheetSpecs();
+    if (errors.length > 0) { showError(errors[0]); return; }
+
+    const templateKey = document.querySelector('input[name="template_key"]:checked')?.value;
+    const customFile  = document.getElementById('custom-file-input').files[0];
+    if (templateKey === 'custom' && !customFile) {
+      showError('Please select or upload a template (Step 1).');
+      return;
+    }
+
+    const fd = new FormData();
+    if (templateKey && templateKey !== 'custom') {
+      fd.append('template_key', templateKey);
+    } else {
+      fd.append('template_file', customFile);
+    }
+    for (const f of poolFiles.files) fd.append('zip_files', f);
+    fd.append('sheet_specs', JSON.stringify(specs));
+    const outName = document.getElementById('inp-output').value.trim();
+    if (outName) fd.append('output_name', outName);
+
+    setLoading(true);
+    try {
+      const res = await fetch('/generate_multi', { method: 'POST', body: fd });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Server error' }));
+        throw new Error(err.error || 'Unknown error');
+      }
+
+      const disp  = res.headers.get('Content-Disposition') || '';
+      const match = disp.match(/filename="?([^";\n]+)"?/);
+      const fname = match ? match[1] : 'output_filled.xlsx';
+
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+
+      // Programmatic download trigger
+      const a = document.createElement('a');
+      a.href = url; a.download = fname;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+
+      // Success banner with fallback link
+      const link = document.getElementById('dlLink');
+      link.href = url; link.download = fname;
+      link.textContent = '⬇ Download Workbook';
+
+      document.getElementById('successTitle').textContent  = 'Multi-sheet workbook ready';
+      document.getElementById('successDetail').textContent =
+        `${specs.length} sheet(s) · ${poolFiles.files.length} ZIP(s) · ${fname}`;
+      document.getElementById('successBanner').style.display = 'flex';
+      markDone('sn5');
+
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Pre-fill on load
+  onTmplChange('standard');
+</script>
+
+</body>
+</html>
