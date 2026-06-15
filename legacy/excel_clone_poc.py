@@ -289,32 +289,39 @@ def _clone_chart_xml(data: bytes, old_display: str, new_display: str) -> bytes:
     return data.replace(old_ref, new_ref)
 
 
-# drawing1.xml.rels rId → chart mapping (template-specific, verified from ZIP):
-#   rId1→chart1, rId2→chart2, rId3→chart3, rId4→chart4, rId5→chart5,
-#   rId6→image3.png, rId7→chart6, rId8→chart7, rId9→image4.png
-_DRAWING_CHART_RIDS  = ("rId1", "rId2", "rId3", "rId4", "rId5", "rId7", "rId8")
-_DRAWING_IMAGE_RELS  = [("rId6", "../media/image3.png"), ("rId9", "../media/image4.png")]
+def _find_drawing_rels_path(parts: dict, sheet_rels_path: str) -> bytes:
+    """Return the raw drawing .rels bytes referenced by the given sheet rels file."""
+    rels_text = parts[sheet_rels_path].decode()
+    for block in re.findall(r"<Relationship\b([^>]+)/>", rels_text):
+        if REL_DRAWING in block and "vmlDrawing" not in block:
+            tgt = re.search(r'Target="([^"]+)"', block).group(1)
+            drawing_path = os.path.normpath("xl/worksheets/" + tgt).replace("\\", "/")
+            drawing_base = os.path.basename(drawing_path)
+            return parts[f"xl/drawings/_rels/{drawing_base}.rels"]
+    raise ValueError(f"No drawing relationship found in {sheet_rels_path}")
 
 
-def _build_drawing_rels(chart_base: int) -> bytes:
+def _build_drawing_rels(source_drawing_rels: bytes, chart_base: int) -> bytes:
     """
-    Build drawingN.xml.rels for a cloned sheet.
-    chart_base is the first chart number allocated to this clone.
-    rId ordering mirrors drawing1.xml.rels exactly.
+    Build drawingN.xml.rels for a cloned sheet by reading the source rels,
+    remapping chart targets to newly cloned chart numbers, and preserving
+    image (and any other non-chart) targets verbatim.
+
+    Mapping rule: original chart{N}.xml → chart{chart_base + N - 1}.xml
     """
     REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
-    c = chart_base
-    entries = [
-        f'<Relationship Id="rId1" Type="{REL_CHART}" Target="../charts/chart{c}.xml"/>',
-        f'<Relationship Id="rId2" Type="{REL_CHART}" Target="../charts/chart{c+1}.xml"/>',
-        f'<Relationship Id="rId3" Type="{REL_CHART}" Target="../charts/chart{c+2}.xml"/>',
-        f'<Relationship Id="rId4" Type="{REL_CHART}" Target="../charts/chart{c+3}.xml"/>',
-        f'<Relationship Id="rId5" Type="{REL_CHART}" Target="../charts/chart{c+4}.xml"/>',
-        f'<Relationship Id="rId6" Type="{REL_IMAGE}" Target="../media/image3.png"/>',
-        f'<Relationship Id="rId7" Type="{REL_CHART}" Target="../charts/chart{c+5}.xml"/>',
-        f'<Relationship Id="rId8" Type="{REL_CHART}" Target="../charts/chart{c+6}.xml"/>',
-        f'<Relationship Id="rId9" Type="{REL_IMAGE}" Target="../media/image4.png"/>',
-    ]
+    entries = []
+    for block in re.findall(r"<Relationship\b([^>]+)/>", source_drawing_rels.decode()):
+        rid    = re.search(r'Id="([^"]+)"',     block).group(1)
+        typ    = re.search(r'Type="([^"]+)"',   block).group(1)
+        target = re.search(r'Target="([^"]+)"', block).group(1)
+        if REL_CHART in typ:
+            orig_num = int(re.search(r"chart(\d+)\.xml$", target).group(1))
+            new_num  = chart_base + (orig_num - 1)
+            target   = re.sub(r"chart\d+\.xml$", f"chart{new_num}.xml", target)
+        entries.append(
+            f'<Relationship Id="{rid}" Type="{typ}" Target="{target}"/>'
+        )
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         f'<Relationships xmlns="{REL_NS}">'
@@ -731,7 +738,8 @@ def clone_saving_calculations(
         parts["xl/drawings/drawing1.xml"], _cnvpr_start
     )
     diag["drawing_cnvpr_id_start"] = _cnvpr_start
-    parts[new_drawing_rels_part]  = _build_drawing_rels(new_chart_base)
+    _src_drawing_rels = _find_drawing_rels_path(parts, sheet_rels_path)
+    parts[new_drawing_rels_part] = _build_drawing_rels(_src_drawing_rels, new_chart_base)
 
     # Charts: 7 patched XML parts + verbatim _rels copies
     for i in range(7):
