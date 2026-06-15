@@ -64,16 +64,16 @@ CANONICAL_HEADERS = {
     "ie_class":     ["Ie Eff Class", "IE Eff Class", "Ie Eff. Class"],
     "dol_vsd":      ["Dol Vsd", "DOL/VSD", "Dol Vsd / Connection",
                      "Dol Vsd/Connection"],
-    "flow_control": ["Flow Control"],
-    "output_kw":    ["Output (kW)"],
+    "flow_control": ["Flow Control Method", "Flow Control"],
+    "output_kw":    ["Output (kW/HP)", "Output (kW)"],
     "shaft_height": ["Shaft height (Frame)", "Shaft Height (Frame)",
                      "Shaft height(Frame)"],
     "run_hours":    ["Annual Running Hours", "Running Hours",
                      "Annual Running Hours [h]"],
-    "avg_loading":  ["Average Loading", "Average Loading ",
-                     "Average flow", "Avg Loading", "Average Flow"],
-    "avg_freq":     ["Average Freqency", "Average Frequency",
-                     "Avg Freqency", "Avg Frequency"],
+    "avg_loading":  ["Average Loading (%)"],
+    "motor_eff":    ["Motor Efficiency [%]"],
+    "avg_flow":     ["Average Flow (%)"],
+    "avg_freq":     ["Average Freqency (Hz)"],
     "ess_motor":    ["Recommended ESS motor", "Recommended ESS Motor"],
     "ess_drive":    ["ESS connection", "ESS Connection"],
 }
@@ -190,26 +190,98 @@ def read_assessment_data(path):
     return records
 
 
+# Flow bands used to compute avg_flow in Method B outputs.
+_FLOW_BANDS = [
+    (20,  "Hours at Flow 20%"),
+    (30,  "Hours at Flow 30%"),
+    (40,  "Hours at Flow 40%"),
+    (50,  "Hours at Flow 50%"),
+    (60,  "Hours at Flow 60%"),
+    (70,  "Hours at Flow 70%"),
+    (80,  "Hours at Flow 80%"),
+    (90,  "Hours at Flow 90%"),
+    (100, "Hours at Flow 100%"),
+]
+
+
 def read_input_assets(path):
-    """Read input assets xlsx. Returns dict keyed by equip_id."""
+    """Read input assets xlsx. Returns dict keyed by equip_id.
+
+    Supports two ABB EEA output variants detected by header names:
+      Method A — provides Avg Loading [%] and Avg Frequency [Hz] directly.
+      Method B — provides Hours at Flow 20%–100%; avg_flow is computed as
+                 Σ(flow% × hours) / Σ(hours), excluding zero-hour bands.
+    Fields absent for a given variant are stored as None.
+    """
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb.active
+
+    # Map each header name to its 0-based column index.
+    header = {
+        str(cell.value).strip(): cell.column - 1
+        for cell in ws[1]
+        if cell.value is not None
+    }
+
+    avg_loading_idx = header.get("Avg Loading [%]")
+    avg_freq_idx    = header.get("Avg Frequency [Hz]")
+    flow_band_idxs  = [
+        (pct, header[name]) for pct, name in _FLOW_BANDS if name in header
+    ]
+    power_kw_idx = header.get("Rated Power [kW]")
+    _hp_key      = next((k for k in header if k.lower() == "rated power [hp]"), None)
+    power_hp_idx = header[_hp_key] if _hp_key is not None else None
+
+    ie_class_idx  = header.get("IE Eff Class")
+    motor_eff_idx = header.get("Motor Efficiency [%]")
+    # HP/NEMA sources carry Motor Efficiency [%] instead of IE Eff Class.
+    is_hp_variant = motor_eff_idx is not None and ie_class_idx is None
+
     assets = {}
     for row in ws.iter_rows(min_row=2, values_only=True):
         if row[0] is None:
             continue
-        shaft_raw    = row[5]
+
+        shaft_raw    = row[header.get("Shaft Height [mm]", 5)]
         shaft_height = int(shaft_raw) if shaft_raw and int(shaft_raw) > 0 else 0
-        assets[row[1]] = {
-            "application":  row[2],
-            "dol_vsd":      row[3],
-            "flow_control": row[4],
+
+        # Method A: direct fields.
+        avg_loading = row[avg_loading_idx] if avg_loading_idx is not None else None
+        avg_freq    = row[avg_freq_idx]    if avg_freq_idx    is not None else None
+
+        # HP/NEMA: prefer HP column; IEC: prefer kW column. No conversion.
+        output_kw = None
+        _power_order = (power_hp_idx, power_kw_idx) if is_hp_variant else (power_kw_idx, power_hp_idx)
+        for _idx in _power_order:
+            if _idx is not None and row[_idx] not in (None, ""):
+                output_kw = row[_idx]
+                break
+
+        # Method B: weighted average across hourly flow bands.
+        avg_flow = None
+        if flow_band_idxs:
+            pairs = [
+                (pct, float(row[idx]))
+                for pct, idx in flow_band_idxs
+                if row[idx] and float(row[idx]) > 0
+            ]
+            if pairs:
+                total_h  = sum(h for _, h in pairs)
+                avg_flow = sum(pct * h for pct, h in pairs) / total_h
+
+        assets[row[header.get("Customer Equipment Id", 1)]] = {
+            "application":  row[header.get("Driven Load",              2)],
+            "dol_vsd":      row[header.get("Dol Vsd",                  3)],
+            "flow_control": row[header.get("Flow Control",             4)],
             "shaft_height": shaft_height,
-            "output_kw":    row[6],
-            "run_hours":    row[8],
-            "ie_class":     row[9],
-            "avg_loading":  row[15],
-            "avg_freq":     row[16],
+            "output_kw":    output_kw,
+            "run_hours":    row[header.get("Annual Running Hours [h]", 8)],
+            "ie_class":     None if is_hp_variant
+                            else (row[ie_class_idx] if ie_class_idx is not None else None),
+            "motor_eff":    row[motor_eff_idx] if motor_eff_idx is not None else None,
+            "avg_loading":  avg_loading,
+            "avg_flow":     avg_flow,
+            "avg_freq":     avg_freq,
         }
     return assets
 
@@ -218,11 +290,10 @@ def load_all_zips(zip_paths):
     """
     Extract and combine data from one or more zip files.
     Returns (assessment_list, input_assets_dict).
-    Assets are re-numbered sequentially across all zips.
+    Assets are numbered 1..N across all zips.
     """
     all_assessment  = []
     all_input_assets = {}
-    running_offset  = 0
 
     tmp_dirs = []
     try:
@@ -250,10 +321,10 @@ def load_all_zips(zip_paths):
             records = read_assessment_data(assessment_path)
             assets  = read_input_assets(input_path)
 
-            # Re-number sequentially if multiple zips
-            for rec in records:
-                rec["num"] = running_offset + rec["num"]
-            running_offset += len(records)
+            # Sequential numbers independent of source Sr. No.
+            start = len(all_assessment) + 1
+            for i, rec in enumerate(records):
+                rec["num"] = start + i
 
             all_assessment.extend(records)
             all_input_assets.update(assets)
@@ -266,11 +337,15 @@ def load_all_zips(zip_paths):
     return all_assessment, all_input_assets
 
 
+def _or_dash(v):
+    return v if v is not None else "-"
+
+
 # ---------------------------------------------------------------------------
-# Fill one sheet
+# Fill one sheet (internal implementation)
 # ---------------------------------------------------------------------------
 
-def fill_sheet(ws, assessment, input_assets, args):
+def _fill_ws(ws, assessment, input_assets, args):
     header_row  = find_header_row(ws)
     data_start  = header_row + 1
     col_map     = build_col_map(ws, header_row)
@@ -319,18 +394,70 @@ def fill_sheet(ws, assessment, input_assets, args):
         w(r, "energy_kwh",   asset["energy_kwh"])
         w(r, "savings_kwh",  asset["savings_kwh"])
         w(r, "investment",   asset["investment"])
-        w(r, "ie_class",     inp.get("ie_class", ""))
+        ie_val = inp.get("ie_class")
+        w(r, "ie_class",     "Not known" if ie_val is None else ie_val)
+        motor_eff_val = inp.get("motor_eff")
+        if motor_eff_val is not None:
+            w(r, "motor_eff", motor_eff_val)
         w(r, "dol_vsd",      inp.get("dol_vsd", ""))
         w(r, "flow_control", inp.get("flow_control", ""))
         w(r, "output_kw",    inp.get("output_kw", ""))
         w(r, "shaft_height", inp.get("shaft_height", 0))
         w(r, "run_hours",    inp.get("run_hours", ""))
-        w(r, "avg_loading",  inp.get("avg_loading", ""))
-        w(r, "avg_freq",     inp.get("avg_freq", ""))
+        w(r, "avg_loading",  _or_dash(inp.get("avg_loading") or None))
+        w(r, "avg_flow",     _or_dash(inp.get("avg_flow")))
+        w(r, "avg_freq",     _or_dash(inp.get("avg_freq") or None))
         w(r, "ess_motor",    asset["ess_motor"])
         w(r, "ess_drive",    asset["ess_drive"])
 
     return len(assessment)
+
+
+# ---------------------------------------------------------------------------
+# Public API — fill a named sheet from zip files
+# ---------------------------------------------------------------------------
+
+def fill_sheet(workbook, worksheet_name, zip_files, assumptions):
+    """
+    Fill a named Saving_Calculations sheet in an already-open workbook.
+
+    This is the primary public entry point for populating a specific sheet
+    by name, independent of all other sheets in the workbook.  It handles
+    zip loading and assumption conversion internally so callers only need to
+    supply the four top-level inputs.
+
+    Parameters
+    ----------
+    workbook       : openpyxl.Workbook  — open workbook object (e.g. from a
+                                          ZIP-level clone or load_workbook)
+    worksheet_name : str                — exact sheet tab name to fill
+    zip_files      : list[str]          — paths to EEA tool output ZIP files
+    assumptions    : dict               — optional overrides; recognised keys:
+                                           currency (str)
+                                           tariff   (float, per kWh)
+                                           co2      (float, kg/kWh)
+                                           tax      (float, % value e.g. 19)
+                                           discount (float, % value e.g. 6.5)
+
+    Returns
+    -------
+    int  — number of asset rows written
+    """
+    if worksheet_name not in workbook.sheetnames:
+        raise ValueError(
+            f"Sheet {worksheet_name!r} not found in workbook.  "
+            f"Available: {workbook.sheetnames}"
+        )
+    ws = workbook[worksheet_name]
+    assessment, input_assets = load_all_zips(zip_files)
+    args = _Args(
+        currency=assumptions.get("currency"),
+        tariff  =assumptions.get("tariff"),
+        co2     =assumptions.get("co2"),
+        tax     =assumptions.get("tax"),
+        discount=assumptions.get("discount"),
+    )
+    return _fill_ws(ws, assessment, input_assets, args)
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +473,7 @@ def fill_template(template_path, assessment, input_assets, args):
 
     for ws in sheets:
         print(f"\n  → '{ws.title}'")
-        count = fill_sheet(ws, assessment, input_assets, args)
+        count = _fill_ws(ws, assessment, input_assets, args)
         print(f"    {count} assets written")
 
     if getattr(args, "output", None):
@@ -463,7 +590,7 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 
 class _Args:
-    """Simple namespace so fill_sheet() works without argparse."""
+    """Simple namespace so _fill_ws() works without argparse."""
     def __init__(self, currency=None, tariff=None, co2=None,
                  tax=None, discount=None, output=None):
         self.currency = currency
@@ -489,6 +616,193 @@ def run_fill(template_path, zip_paths, output_path,
     wb     = openpyxl.load_workbook(template_path)
     sheets = find_saving_sheets(wb)
     for ws in sheets:
-        fill_sheet(ws, assessment, input_assets, args)
+        _fill_ws(ws, assessment, input_assets, args)
     wb.save(output_path)
     return len(assessment), [ws.title for ws in sheets]
+
+
+def run_fill_multi(template_path, sheet_specs, output_path):
+    """
+    Build a workbook with one Saving Calculations sheet per spec.
+    The original master template sheet is removed after all copies are created.
+
+    sheet_specs — list of dicts, each:
+        {
+            "name":     str,           # tab title; max 31 chars, must be unique
+            "zips":     [path, ...],   # absolute paths to the ZIP files for this sheet
+            "currency": str  | None,
+            "tariff":   float | None,
+            "co2":      float | None,
+            "tax":      float | None,
+            "discount": float | None,
+        }
+
+    Returns (sheet_names, asset_counts):
+        sheet_names  — list[str] of created tab titles, in spec order
+        asset_counts — dict {sheet_name: int}
+    """
+    wb        = openpyxl.load_workbook(template_path)
+    master_ws = find_saving_sheets(wb)[0]
+
+    print(f"\n  Template : {os.path.basename(template_path)}")
+    print(f"  Master   : '{master_ws.title}'")
+    print(f"  Sheets   : {len(sheet_specs)}\n")
+
+    sheet_names  = []
+    asset_counts = {}
+
+    for spec in sheet_specs:
+        tab_name = spec["name"]
+
+        # Copy master — preserves all formatting, formulas, conditional
+        # formatting, merged cells, and named ranges in the template.
+        new_ws       = wb.copy_worksheet(master_ws)
+        new_ws.title = tab_name
+
+        print(f"  → '{tab_name}'")
+        assessment, input_assets = load_all_zips(spec["zips"])
+
+        args = _Args(
+            currency = spec.get("currency"),
+            tariff   = spec.get("tariff"),
+            co2      = spec.get("co2"),
+            tax      = spec.get("tax"),
+            discount = spec.get("discount"),
+        )
+
+        count = _fill_ws(new_ws, assessment, input_assets, args)
+        print(f"    {count} assets written")
+
+        sheet_names.append(tab_name)
+        asset_counts[tab_name] = count
+
+    # Remove the blank master sheet now that all named copies exist.
+    del wb[master_ws.title]
+
+    wb.save(output_path)
+    return sheet_names, asset_counts
+
+
+# ---------------------------------------------------------------------------
+# ZIP-level multi-sheet workbook coordinator
+# ---------------------------------------------------------------------------
+
+def generate_multi_workbook(template_path, sheet_specs, output_path):
+    """
+    Build a workbook with one filled Saving_Calculations sheet per spec.
+
+    Combines ZIP-level sheet cloning (preserves Excel Tables, structured
+    references, conditional formatting and data validation) with fill_sheet().
+    This supersedes run_fill_multi() for templates where table integrity must
+    survive the copy step.
+
+    Each clone gets a workbook-unique table name suffix (_2, _3, …) so that
+    structured-reference formulas in every sheet remain valid and independent.
+    The original unfilled Saving_Calculations sheet is removed from the output.
+
+    Parameters
+    ----------
+    template_path : str
+        Path to an ABB Saving_Calculations template workbook.
+    sheet_specs : list[dict]
+        One dict per output sheet.  Recognised keys:
+            name     str            tab title  (max 31 chars, must be unique)
+            zips     list[str]      EEA tool ZIP paths for this sheet
+            currency str  | None
+            tariff   float | None   electricity tariff per kWh
+            co2      float | None   CO2 intensity in kg/kWh
+            tax      float | None   corporate tax rate as a % value (e.g. 19)
+            discount float | None   discount rate as a % value  (e.g. 6.5)
+    output_path : str
+        Destination .xlsx path.
+
+    Returns
+    -------
+    tuple[list[str], dict[str, int]]
+        (sheet_names, asset_counts)
+        sheet_names   — tab titles in spec order
+        asset_counts  — {tab_title: int} rows written per sheet
+    """
+    try:
+        from excel_clone_poc import clone_saving_calculations
+    except ImportError as exc:
+        raise RuntimeError(
+            "generate_multi_workbook requires excel_clone_poc.py to be present "
+            "in the same directory.  Import failed: " + str(exc)
+        ) from exc
+
+    if not sheet_specs:
+        raise ValueError("sheet_specs must not be empty.")
+
+    print(f"\n  Template  : {os.path.basename(template_path)}")
+    print(f"  Sheets    : {len(sheet_specs)}")
+
+    # ── Phase 1: build chained ZIP-level clones ───────────────────────────
+    # Iteration i writes one clone whose table suffix is "_{i+2}" so that
+    # every workbook-level table name remains unique regardless of N.
+    # All intermediate files are temp files; only output_path is kept.
+
+    tmp_files          = []
+    source_sheet_name  = None
+    current_src        = template_path
+
+    try:
+        for i, spec in enumerate(sheet_specs):
+            is_last   = (i == len(sheet_specs) - 1)
+            next_path = output_path if is_last else _make_tempfile(".xlsx")
+            if not is_last:
+                tmp_files.append(next_path)
+
+            diag = clone_saving_calculations(
+                current_src,
+                next_path,
+                clone_display_name=spec["name"],
+                clone_suffix=f"_{i + 2}",
+            )
+
+            if source_sheet_name is None:
+                source_sheet_name = diag["source_sheet_name"]
+
+            current_src = next_path
+            print(f"  Cloned  → {spec['name']!r}  "
+                  f"(table={diag['new_main_table_name']!r}  "
+                  f"SR={diag['sr_in_clone']})")
+
+    finally:
+        for tf in tmp_files:
+            try:
+                os.unlink(tf)
+            except OSError:
+                pass
+
+    # ── Phase 2: fill each cloned sheet ──────────────────────────────────
+    wb = openpyxl.load_workbook(output_path, data_only=False)
+
+    sheet_names  = []
+    asset_counts = {}
+
+    for spec in sheet_specs:
+        tab        = spec["name"]
+        assumptions = {k: spec.get(k)
+                       for k in ("currency", "tariff", "co2", "tax", "discount")}
+        print(f"\n  → '{tab}'")
+        count = fill_sheet(wb, tab, spec["zips"], assumptions)
+        print(f"    {count} assets written")
+        sheet_names.append(tab)
+        asset_counts[tab] = count
+
+    # ── Phase 3: remove the original unfilled source sheet ───────────────
+    if source_sheet_name and source_sheet_name in wb.sheetnames:
+        del wb[source_sheet_name]
+        print(f"\n  Removed original sheet: {source_sheet_name!r}")
+
+    wb.save(output_path)
+    print(f"\n  Saved → {output_path}")
+    return sheet_names, asset_counts
+
+
+def _make_tempfile(suffix=""):
+    """Create a named temp file and return its path (caller is responsible for deletion)."""
+    fd, path = tempfile.mkstemp(suffix=suffix, prefix="gmw_")
+    os.close(fd)
+    return path
