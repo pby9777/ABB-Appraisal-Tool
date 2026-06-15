@@ -3,4 +3,5 @@ pandas
 openpyxl
 python-docx
 numpy
-xlsxwritergunicorn
+xlsxwriter
+gunicorn
