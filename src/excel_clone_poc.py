@@ -1,0 +1,842 @@
+#!/usr/bin/env python3
+"""
+POC: ZIP-level Saving_Calculations sheet cloner.
+
+Clones the Saving_Calculations sheet from an ABB appraisal template workbook,
+producing a second sheet (Saving_Calculations_2) that is a structural replica:
+  - renamed Excel table (Saving_Table2410 → Saving_Table2410_2)
+  - all ~13,883 structured references updated to the new table name
+  - drawing / chart links stripped  (charts remain on the original sheet)
+  - calcChain.xml removed           (Excel rebuilds on first open)
+
+Design ref: ZIP-level cloning design doc (2026-05-29).
+POC scope only — no data filling, no UI, no production hardening.
+
+Usage:
+    python legacy/excel_clone_poc.py
+    python legacy/excel_clone_poc.py <template.xlsx> <output.xlsx>
+"""
+
+import io
+import os
+import re
+import sys
+import zipfile
+from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
+
+# ---------------------------------------------------------------------------
+# OOXML constants
+# ---------------------------------------------------------------------------
+
+REL_WORKSHEET = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
+)
+REL_TABLE = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table"
+)
+REL_DRAWING = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"
+)
+REL_VMLDRAWING = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing"
+)
+REL_CHART = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+)
+REL_IMAGE = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+)
+
+CT_WORKSHEET = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
+)
+CT_TABLE = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"
+)
+CT_DRAWING = (
+    "application/vnd.openxmlformats-officedocument.drawing+xml"
+)
+CT_CHART = (
+    "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+)
+
+CLONE_SUFFIX = "_2"
+
+DEFAULT_TEMPLATE = (
+    "legacy/excel_templates/1_0_region_site_name_saving_calculations.xlsx"
+)
+DEFAULT_OUTPUT = "legacy/excel_clone_poc_output.xlsx"
+
+# ---------------------------------------------------------------------------
+# Step 1 — load all ZIP parts into memory
+# ---------------------------------------------------------------------------
+
+def _load_parts(path: str) -> dict:
+    parts = {}
+    with zipfile.ZipFile(path, "r") as zf:
+        for name in zf.namelist():
+            parts[name] = zf.read(name)
+    return parts
+
+
+# ---------------------------------------------------------------------------
+# Step 2 — discovery helpers
+# ---------------------------------------------------------------------------
+
+def _find_sheet_part(parts: dict) -> tuple:
+    """
+    Locate the Saving_Calculations sheet by inspecting workbook.xml and its
+    relationship file.  Works for both 'Saving_Calculations' (v1/v3) and
+    'Saving Calculations' (v2).
+
+    Returns: (part_path, rels_path, display_name)
+    """
+    wb_text = parts["xl/workbook.xml"].decode()
+
+    # Match <sheet name="Saving..." r:id="rIdN"/>
+    m = re.search(
+        r'<sheet\b[^>]+name="([^"]*[Ss]aving[^"]*)"[^>]+r:id="([^"]+)"',
+        wb_text,
+    )
+    if not m:
+        raise ValueError("No Saving… sheet found in workbook.xml")
+
+    display_name = m.group(1)
+    rel_id = m.group(2)
+
+    # Resolve r:id → part path via workbook.xml.rels
+    wb_rels = parts["xl/_rels/workbook.xml.rels"].decode()
+    tm = re.search(
+        r'<Relationship\b[^>]+Id="' + re.escape(rel_id) + r'"[^>]+Target="([^"]+)"',
+        wb_rels,
+    )
+    if not tm:
+        raise ValueError(f"Relationship {rel_id} not found in workbook.xml.rels")
+
+    # target is relative from xl/: e.g. "worksheets/sheet3.xml"
+    target = tm.group(1)
+    part_path = "xl/" + target
+
+    # _rels path: xl/worksheets/_rels/sheet3.xml.rels
+    base = os.path.basename(target)          # "sheet3.xml"
+    rels_path = f"xl/worksheets/_rels/{base}.rels"
+
+    return part_path, rels_path, display_name
+
+
+def _find_table_parts(parts: dict, sheet_rels_path: str, sheet_path: str) -> tuple:
+    """
+    Find the two Excel tables linked from the sheet's _rels file.
+    Classifies them: main table = the one whose name[…] appears in sheet
+    formula content; summary = the other.
+
+    Returns:
+        ((main_zip_path, main_name), (summ_zip_path, summ_name))
+    """
+    rels_text = parts[sheet_rels_path].decode()
+
+    # Extract all Relationship elements, filter by table type
+    raw_targets = []
+    for attr_block in re.findall(r"<Relationship\b([^>]+)/>", rels_text):
+        if REL_TABLE in attr_block:
+            tm = re.search(r'Target="([^"]+)"', attr_block)
+            if tm:
+                raw_targets.append(tm.group(1))
+
+    if not raw_targets:
+        raise ValueError(f"No table relationships in {sheet_rels_path}")
+
+    # Resolve relative targets → zip part paths
+    # Targets are relative to xl/worksheets/:  "../tables/table1.xml"
+    resolved = []
+    for t in raw_targets:
+        zip_path = os.path.normpath("xl/worksheets/" + t).replace("\\", "/")
+        tname = re.search(rb'\bname="([^"]+)"', parts[zip_path]).group(1).decode()
+        resolved.append((zip_path, tname))
+
+    sheet_bytes = parts[sheet_path]
+    main = None
+    summ = None
+    for zip_path, tname in resolved:
+        if (tname + "[").encode() in sheet_bytes:
+            main = (zip_path, tname)
+        else:
+            summ = (zip_path, tname)
+
+    # Fallback: use declaration order if neither name appears with [
+    if main is None:
+        main, summ = resolved[0], resolved[1]
+
+    return main, summ
+
+
+def _next_sheet_part(parts: dict) -> str:
+    """Return the next available xl/worksheets/sheetN.xml path."""
+    nums = []
+    for name in parts:
+        m = re.match(r"xl/worksheets/sheet(\d+)\.xml$", name)
+        if m:
+            nums.append(int(m.group(1)))
+    return f"xl/worksheets/sheet{max(nums) + 1}.xml"
+
+
+def _next_table_parts(parts: dict) -> tuple:
+    """Return next two available xl/tables/tableN.xml paths."""
+    nums = []
+    for name in parts:
+        m = re.match(r"xl/tables/table(\d+)\.xml$", name)
+        if m:
+            nums.append(int(m.group(1)))
+    base = (max(nums) + 1) if nums else 1
+    return f"xl/tables/table{base}.xml", f"xl/tables/table{base + 1}.xml"
+
+
+def _max_table_id(parts: dict) -> int:
+    """Highest id= value across all table XML files (workbook-unique constraint)."""
+    ids = []
+    for name, data in parts.items():
+        if re.match(r"xl/tables/table\d+\.xml$", name):
+            m = re.search(rb"<table\b[^>]+\bid=\"(\d+)\"", data)
+            if m:
+                ids.append(int(m.group(1)))
+    return max(ids) if ids else 0
+
+
+def _max_rel_id(wb_rels: bytes) -> int:
+    nums = [int(x) for x in re.findall(rb'\bId="rId(\d+)"', wb_rels)]
+    return max(nums) if nums else 0
+
+
+def _max_sheet_id(wb_xml: bytes) -> int:
+    nums = [int(x) for x in re.findall(rb'\bsheetId="(\d+)"', wb_xml)]
+    return max(nums) if nums else 0
+
+
+def _max_drawing_cnvpr_id(parts: dict) -> int:
+    """
+    Highest cNvPr id= across all drawing XML parts (workbook-unique per ECMA-376 §20.1.2.2.8).
+    Must be called before the new drawing part is registered in parts.
+    """
+    ids = []
+    for name, data in parts.items():
+        if re.match(r"xl/drawings/drawing\d+\.xml$", name):
+            ids.extend(int(x) for x in re.findall(rb'<[a-zA-Z:]+cNvPr\s+id="(\d+)"', data))
+    return max(ids) if ids else 0
+
+
+def _renumber_drawing_ids(data: bytes, start_id: int) -> bytes:
+    """
+    Patch a cloned drawing XML to satisfy the workbook-unique cNvPr id= constraint:
+      1. Strip <a:extLst> blocks that are direct children of cNvPr elements.
+         These contain a16:creationId GUIDs which must also be unique per object;
+         Excel regenerates them on first save — stripping is safe.
+      2. Renumber every cNvPr id= sequentially starting at start_id.
+    Anchors, twoCellAnchor positions, chart r:id values and image r:embed
+    values are NOT touched.
+    """
+    # Strip a16:creationId extLst from cNvPr elements only.
+    # Anchored to the cNvPr opening tag so extLst blocks in blipFill/spPr
+    # (a14:useLocalDpi, a14:shadowObscured) are left untouched.
+    data = re.sub(
+        rb"(<[a-zA-Z:]+cNvPr\b[^>]*>)\s*<a:extLst>.*?</a:extLst>",
+        rb"\1",
+        data,
+        flags=re.DOTALL,
+    )
+    # Renumber cNvPr id= in document order.
+    # cNvPr always has id= as its first attribute in drawing XML (OOXML convention).
+    _next = [start_id]
+    def _sub(m):
+        val = str(_next[0]).encode()
+        _next[0] += 1
+        return m.group(1) + val + m.group(3)
+    data = re.sub(rb'(<[a-zA-Z:]+cNvPr\s+id=")(\d+)(")', _sub, data)
+    return data
+
+
+def _next_drawing_num(parts: dict) -> int:
+    """Return the next available drawing number (template has drawing1–3)."""
+    nums = []
+    for name in parts:
+        m = re.match(r"xl/drawings/drawing(\d+)\.xml$", name)
+        if m:
+            nums.append(int(m.group(1)))
+    return max(nums) + 1 if nums else 1
+
+
+def _next_chart_num(parts: dict) -> int:
+    """Return the next available chart number (template has chart1–7)."""
+    nums = []
+    for name in parts:
+        m = re.match(r"xl/charts/chart(\d+)\.xml$", name)
+        if m:
+            nums.append(int(m.group(1)))
+    return max(nums) + 1 if nums else 1
+
+
+def _formula_sheet_name(display_name: str) -> str:
+    """Wrap sheet name in single quotes if it contains non-word characters."""
+    if re.search(r"[^A-Za-z0-9_]", display_name):
+        return "'" + display_name.replace("'", "''") + "'"
+    return display_name
+
+
+def _clone_chart_xml(data: bytes, old_display: str, new_display: str) -> bytes:
+    """Replace sheet-name formula references in a chart XML part."""
+    old_ref = (_formula_sheet_name(old_display) + "!").encode()
+    new_ref = (_formula_sheet_name(new_display) + "!").encode()
+    return data.replace(old_ref, new_ref)
+
+
+def _find_drawing_rels_path(parts: dict, sheet_rels_path: str) -> bytes:
+    """Return the raw drawing .rels bytes referenced by the given sheet rels file."""
+    rels_text = parts[sheet_rels_path].decode()
+    for block in re.findall(r"<Relationship\b([^>]+)/>", rels_text):
+        if REL_DRAWING in block and "vmlDrawing" not in block:
+            tgt = re.search(r'Target="([^"]+)"', block).group(1)
+            drawing_path = os.path.normpath("xl/worksheets/" + tgt).replace("\\", "/")
+            drawing_base = os.path.basename(drawing_path)
+            return parts[f"xl/drawings/_rels/{drawing_base}.rels"]
+    raise ValueError(f"No drawing relationship found in {sheet_rels_path}")
+
+
+def _build_drawing_rels(source_drawing_rels: bytes, chart_base: int) -> bytes:
+    """
+    Build drawingN.xml.rels for a cloned sheet by reading the source rels,
+    remapping chart targets to newly cloned chart numbers, and preserving
+    image (and any other non-chart) targets verbatim.
+
+    Mapping rule: original chart{N}.xml → chart{chart_base + N - 1}.xml
+    """
+    REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+    entries = []
+    for block in re.findall(r"<Relationship\b([^>]+)/>", source_drawing_rels.decode()):
+        rid    = re.search(r'Id="([^"]+)"',     block).group(1)
+        typ    = re.search(r'Type="([^"]+)"',   block).group(1)
+        target = re.search(r'Target="([^"]+)"', block).group(1)
+        if REL_CHART in typ:
+            orig_num = int(re.search(r"chart(\d+)\.xml$", target).group(1))
+            new_num  = chart_base + (orig_num - 1)
+            target   = re.sub(r"chart\d+\.xml$", f"chart{new_num}.xml", target)
+        entries.append(
+            f'<Relationship Id="{rid}" Type="{typ}" Target="{target}"/>'
+        )
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<Relationships xmlns="{REL_NS}">'
+        + "".join(entries)
+        + "</Relationships>"
+    ).encode()
+
+
+def _inject_drawing_rel(data: bytes, new_drawing_part: str) -> bytes:
+    """
+    Append a drawing-type Relationship to a sheet _rels file.
+    Uses rId2 to match the <drawing r:id="rId2"/> element in the sheet XML.
+    """
+    new_rel = (
+        f'<Relationship Id="rId2" Type="{REL_DRAWING}" '
+        f'Target="{_zip_to_rel_target(new_drawing_part)}"/>'
+    ).encode()
+    return data.replace(b"</Relationships>", new_rel + b"</Relationships>")
+
+
+def _update_content_types_charts(
+    data: bytes, new_drawing_part: str, new_chart_parts: list
+) -> bytes:
+    """Register a new drawing part and cloned chart parts in [Content_Types].xml."""
+    def _override(part: str, ct: str) -> bytes:
+        return f'<Override PartName="/{part}" ContentType="{ct}"/>'.encode()
+
+    inserts = _override(new_drawing_part, CT_DRAWING)
+    for chart_part in new_chart_parts:
+        inserts += _override(chart_part, CT_CHART)
+    return data.replace(b"</Types>", inserts + b"</Types>")
+
+
+def _strip_xr_uids(data: bytes) -> bytes:
+    """
+    Remove xr*:uid="{GUID}" revision-tracking attributes.
+    These are Excel-proprietary; duplicates cause co-authoring conflicts.
+    Stripping them is safe: Excel treats them as optional annotations.
+    """
+    return re.sub(rb'\s+xr\d*:uid="\{[0-9A-Fa-f-]+\}"', b"", data)
+
+
+# ---------------------------------------------------------------------------
+# Step 3 — clone sheet XML
+# ---------------------------------------------------------------------------
+
+def _clone_sheet_xml(data: bytes, old_table_name: str, new_table_name: str) -> bytes:
+    """
+    Patch the cloned sheet XML:
+      (a) rename all structured references  e.g. Saving_Table2410[ → Saving_Table2410_2[
+      (b) deactivate the sheet's tab selection
+      (c) remove <drawing> and <legacyDrawing> elements (charts stay on original)
+      (d) strip xr:uid revision attributes
+    """
+    # (a) Structured reference rename — 13,883 occurrences verified in pre-flight
+    #     Only 'TableName[' pattern used; bare name never appears in sheet XML.
+    data = data.replace(
+        (old_table_name + "[").encode(),
+        (new_table_name + "[").encode(),
+    )
+
+    # (b) Deactivate tab so both sheets are not selected simultaneously on open
+    data = data.replace(b'tabSelected="1"', b'tabSelected="0"')
+
+    # (c) Strip only the VML comment overlay; the <drawing> element is preserved
+    #     so the cloned sheet references its own drawingN.xml (injected into _rels).
+    data = re.sub(rb"<legacyDrawing\b[^>]*/>", b"", data)
+
+    # (d) Revision tracking GUIDs
+    data = _strip_xr_uids(data)
+
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Step 4 — clone sheet _rels
+# ---------------------------------------------------------------------------
+
+def _zip_to_rel_target(zip_path: str) -> str:
+    """
+    Convert a zip part path to the relative target used in a worksheet _rels.
+    "xl/tables/table1.xml"  →  "../tables/table1.xml"
+    """
+    assert zip_path.startswith("xl/"), f"Expected xl/ prefix: {zip_path}"
+    return "../" + zip_path[3:]  # strip leading "xl/"
+
+
+def _clone_sheet_rels(
+    data: bytes,
+    old_main_zip: str,
+    new_main_zip: str,
+    old_summ_zip: str,
+    new_summ_zip: str,
+) -> bytes:
+    """
+    In the cloned sheet's _rels:
+      - Retarget table relationships to the new table parts
+      - Remove drawing and vmlDrawing relationships (chart POC scope decision)
+    """
+    # Retarget main table
+    data = data.replace(
+        _zip_to_rel_target(old_main_zip).encode(),
+        _zip_to_rel_target(new_main_zip).encode(),
+    )
+    # Retarget summary table
+    data = data.replace(
+        _zip_to_rel_target(old_summ_zip).encode(),
+        _zip_to_rel_target(new_summ_zip).encode(),
+    )
+
+    # Remove drawing-type relationships so the cloned sheet has no dangling refs
+    # Matches both REL_DRAWING and REL_VMLDRAWING by suffix
+    data = re.sub(
+        rb"<Relationship\b[^>]+Type=\"[^\"]*(?:drawing|vmlDrawing)\"[^>]*/>",
+        b"",
+        data,
+    )
+
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Step 5 — clone main table XML
+# ---------------------------------------------------------------------------
+
+def _clone_main_table_xml(
+    data: bytes,
+    old_name: str,
+    new_name: str,
+    old_id: int,
+    new_id: int,
+) -> bytes:
+    """
+    Patch the cloned main table XML:
+      - Rename name= and displayName= on the root <table> element
+      - Update the workbook-unique id= attribute
+      - Rename all 13 calculatedColumnFormula structured references
+      - Strip xr:uid attributes
+    """
+    # Root element: name="Saving_Table2410" displayName="Saving_Table2410"
+    # These two attributes appear adjacently on the root <table> element.
+    # Pre-flight confirmed this exact substring exists exactly once.
+    data = data.replace(
+        f'name="{old_name}" displayName="{old_name}"'.encode(),
+        f'name="{new_name}" displayName="{new_name}"'.encode(),
+    )
+
+    # Table id= — root element appears before any tableColumn in the file.
+    # count=1 ensures only the root element's id is replaced.
+    # Pre-flight: no tableColumn has id=9; root id at byte 375 vs first col at 859.
+    data = data.replace(
+        f'id="{old_id}"'.encode(),
+        f'id="{new_id}"'.encode(),
+        1,
+    )
+
+    # calculatedColumnFormula elements (13 occurrences)
+    data = data.replace(
+        (old_name + "[").encode(),
+        (new_name + "[").encode(),
+    )
+
+    data = _strip_xr_uids(data)
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Step 6 — clone summary table XML
+# ---------------------------------------------------------------------------
+
+def _clone_summ_table_xml(
+    data: bytes,
+    old_name: str,
+    new_name: str,
+    old_id: int,
+    new_id: int,
+) -> bytes:
+    """
+    Patch the cloned summary table (FiveYearPlan / Table43611).
+    No structured references — only root element rename and id update.
+    """
+    data = data.replace(
+        f'name="{old_name}" displayName="{old_name}"'.encode(),
+        f'name="{new_name}" displayName="{new_name}"'.encode(),
+    )
+    data = data.replace(
+        f'id="{old_id}"'.encode(),
+        f'id="{new_id}"'.encode(),
+        1,
+    )
+    data = _strip_xr_uids(data)
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Step 7 — update workbook.xml
+# ---------------------------------------------------------------------------
+
+def _update_workbook_xml(
+    data: bytes,
+    clone_display_name: str,
+    new_sheet_id: int,
+    new_rel_id: str,
+) -> bytes:
+    """Append a new <sheet> entry inside the existing <sheets> block."""
+    new_element = (
+        f'<sheet name="{xml_escape(clone_display_name)}" '
+        f'sheetId="{new_sheet_id}" '
+        f'r:id="{new_rel_id}"/>'
+    ).encode()
+    return data.replace(b"</sheets>", new_element + b"</sheets>")
+
+
+# ---------------------------------------------------------------------------
+# Step 8 — update workbook.xml.rels
+# ---------------------------------------------------------------------------
+
+def _update_workbook_rels(
+    data: bytes, new_rel_id: str, new_sheet_part: str
+) -> bytes:
+    """Append a new worksheet <Relationship> to workbook.xml.rels."""
+    # Target is relative from xl/: strip the "xl/" prefix
+    target = new_sheet_part[3:]    # "xl/worksheets/sheetN.xml" → "worksheets/sheetN.xml"
+    new_rel = (
+        f'<Relationship Id="{new_rel_id}" '
+        f'Type="{REL_WORKSHEET}" '
+        f'Target="{target}"/>'
+    ).encode()
+    return data.replace(b"</Relationships>", new_rel + b"</Relationships>")
+
+
+# ---------------------------------------------------------------------------
+# Step 9 — update [Content_Types].xml
+# ---------------------------------------------------------------------------
+
+def _update_content_types(
+    data: bytes,
+    new_sheet_part: str,
+    new_table_main: str,
+    new_table_summ: str,
+) -> bytes:
+    """
+    Register the three new parts with their content types.
+    Missing Override entries cause Excel to show "We found a problem…" on open.
+    """
+    def _override(part: str, ct: str) -> bytes:
+        return f'<Override PartName="/{part}" ContentType="{ct}"/>'.encode()
+
+    inserts = (
+        _override(new_sheet_part, CT_WORKSHEET)
+        + _override(new_table_main, CT_TABLE)
+        + _override(new_table_summ, CT_TABLE)
+    )
+    return data.replace(b"</Types>", inserts + b"</Types>")
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+
+def clone_saving_calculations(
+    template_path: str,
+    output_path: str,
+    clone_display_name: str = "Saving_Calculations_2",
+    clone_suffix: str = CLONE_SUFFIX,
+) -> dict:
+    """
+    Clone the Saving_Calculations sheet from template_path.
+    Writes output to output_path.
+    clone_suffix controls the table-name suffix (default "_2").
+    Pass "_3", "_4" etc. when calling on an already-cloned workbook.
+    Returns a diagnostics dict consumed by _print_report().
+    """
+    diag = {}
+
+    # ── Load ────────────────────────────────────────────────────────────────
+    parts = _load_parts(template_path)
+    diag["parts_loaded"] = len(parts)
+
+    # ── Discover source parts ────────────────────────────────────────────────
+    sheet_path, sheet_rels_path, sheet_display_name = _find_sheet_part(parts)
+    diag["source_sheet_part"] = sheet_path
+    diag["source_sheet_name"] = sheet_display_name
+    diag["source_sheet_rels"] = sheet_rels_path
+
+    (main_zip, main_name), (summ_zip, summ_name) = _find_table_parts(
+        parts, sheet_rels_path, sheet_path
+    )
+    diag["main_table_part"] = main_zip
+    diag["main_table_name"] = main_name
+    diag["summ_table_part"] = summ_zip
+    diag["summ_table_name"] = summ_name
+
+    # Extract current IDs from source tables
+    main_id = int(
+        re.search(rb"<table\b[^>]+\bid=\"(\d+)\"", parts[main_zip]).group(1)
+    )
+    summ_id = int(
+        re.search(rb"<table\b[^>]+\bid=\"(\d+)\"", parts[summ_zip]).group(1)
+    )
+    diag["main_table_id_src"] = main_id
+    diag["summ_table_id_src"] = summ_id
+
+    # ── Allocate new part paths and IDs ──────────────────────────────────────
+    new_sheet_part = _next_sheet_part(parts)
+    new_table_main_part, new_table_summ_part = _next_table_parts(parts)
+    new_main_id   = _max_table_id(parts) + 1
+    new_summ_id   = new_main_id + 1
+    new_sheet_id  = _max_sheet_id(parts["xl/workbook.xml"]) + 1
+    new_rel_id    = f"rId{_max_rel_id(parts['xl/_rels/workbook.xml.rels']) + 1}"
+    new_main_name = main_name + clone_suffix
+    new_summ_name = summ_name + clone_suffix
+
+    # Chart/drawing allocation — must happen before any parts are mutated so
+    # _next_drawing_num / _next_chart_num scan the original part set.
+    new_drawing_num  = _next_drawing_num(parts)
+    new_chart_base   = _next_chart_num(parts)
+    new_drawing_part = f"xl/drawings/drawing{new_drawing_num}.xml"
+    new_drawing_rels_part = f"xl/drawings/_rels/drawing{new_drawing_num}.xml.rels"
+    new_chart_parts  = [f"xl/charts/chart{new_chart_base + i}.xml"      for i in range(7)]
+    new_chart_rels_parts = [f"xl/charts/_rels/chart{new_chart_base + i}.xml.rels" for i in range(7)]
+
+    diag.update(
+        {
+            "new_sheet_part": new_sheet_part,
+            "new_table_main_part": new_table_main_part,
+            "new_table_summ_part": new_table_summ_part,
+            "new_main_table_name": new_main_name,
+            "new_summ_table_name": new_summ_name,
+            "new_main_table_id": new_main_id,
+            "new_summ_table_id": new_summ_id,
+            "new_sheet_id": new_sheet_id,
+            "new_rel_id": new_rel_id,
+            "new_drawing_part": new_drawing_part,
+            "new_drawing_num": new_drawing_num,
+            "new_chart_base": new_chart_base,
+        }
+    )
+
+    # ── Steps 3–6: produce cloned XML bytes ──────────────────────────────────
+    cloned_sheet = _clone_sheet_xml(parts[sheet_path], main_name, new_main_name)
+    cloned_rels = _clone_sheet_rels(
+        parts[sheet_rels_path],
+        main_zip, new_table_main_part,
+        summ_zip, new_table_summ_part,
+    )
+    # Inject drawing relationship pointing to the new drawingN.xml
+    cloned_rels = _inject_drawing_rel(cloned_rels, new_drawing_part)
+
+    cloned_main_table = _clone_main_table_xml(
+        parts[main_zip], main_name, new_main_name, main_id, new_main_id
+    )
+    cloned_summ_table = _clone_summ_table_xml(
+        parts[summ_zip], summ_name, new_summ_name, summ_id, new_summ_id
+    )
+
+    # ── Step 3b: clone chart XML parts (7 charts) ────────────────────────────
+    # chart1–7 → chartN–N+6 with formula sheet-name patched
+    cloned_charts = [
+        _clone_chart_xml(parts[f"xl/charts/chart{i+1}.xml"], sheet_display_name, clone_display_name)
+        for i in range(7)
+    ]
+    # chart _rels: verbatim copy — style/colors/themeOverride are relative shared parts
+    cloned_chart_rels = [parts[f"xl/charts/_rels/chart{i+1}.xml.rels"] for i in range(7)]
+
+    # Formula substitution count verification
+    diag["chart_formula_replacements"] = sum(
+        c.count((_formula_sheet_name(clone_display_name) + "!").encode())
+        for c in cloned_charts
+    )
+    diag["chart_old_refs_remaining"] = sum(
+        c.count((_formula_sheet_name(sheet_display_name) + "!").encode())
+        for c in cloned_charts
+    )
+
+    # Substitution count verification
+    diag["sr_in_source"]  = parts[sheet_path].count((main_name + "[").encode())
+    diag["sr_in_clone"]   = cloned_sheet.count((new_main_name + "[").encode())
+    diag["sr_old_in_clone"] = cloned_sheet.count((main_name + "[").encode())
+
+    # ── Steps 7–9: update manifest files in-place ────────────────────────────
+    parts["xl/workbook.xml"] = _update_workbook_xml(
+        parts["xl/workbook.xml"], clone_display_name, new_sheet_id, new_rel_id
+    )
+    parts["xl/_rels/workbook.xml.rels"] = _update_workbook_rels(
+        parts["xl/_rels/workbook.xml.rels"], new_rel_id, new_sheet_part
+    )
+    parts["[Content_Types].xml"] = _update_content_types(
+        parts["[Content_Types].xml"],
+        new_sheet_part, new_table_main_part, new_table_summ_part,
+    )
+    parts["[Content_Types].xml"] = _update_content_types_charts(
+        parts["[Content_Types].xml"], new_drawing_part, new_chart_parts,
+    )
+
+    # ── Step 10: delete calcChain ─────────────────────────────────────────────
+    diag["calc_chain_present"] = "xl/calcChain.xml" in parts
+    parts.pop("xl/calcChain.xml", None)
+
+    # ── Register new parts ────────────────────────────────────────────────────
+    new_sheet_base = os.path.basename(new_sheet_part)       # "sheet4.xml"
+    new_sheet_rels_part = f"xl/worksheets/_rels/{new_sheet_base}.rels"
+
+    parts[new_sheet_part]       = cloned_sheet
+    parts[new_sheet_rels_part]  = cloned_rels
+    parts[new_table_main_part]  = cloned_main_table
+    parts[new_table_summ_part]  = cloned_summ_table
+
+    # Drawing: cNvPr ids renumbered to be globally unique (ECMA-376 §20.1.2.2.8);
+    # a16:creationId GUIDs stripped (Excel regenerates on first save).
+    # Anchors, geometry and chart r:id references are preserved exactly.
+    _cnvpr_start = _max_drawing_cnvpr_id(parts) + 1
+    parts[new_drawing_part] = _renumber_drawing_ids(
+        parts["xl/drawings/drawing1.xml"], _cnvpr_start
+    )
+    diag["drawing_cnvpr_id_start"] = _cnvpr_start
+    _src_drawing_rels = _find_drawing_rels_path(parts, sheet_rels_path)
+    parts[new_drawing_rels_part] = _build_drawing_rels(_src_drawing_rels, new_chart_base)
+
+    # Charts: 7 patched XML parts + verbatim _rels copies
+    for i in range(7):
+        parts[new_chart_parts[i]]      = cloned_charts[i]
+        parts[new_chart_rels_parts[i]] = cloned_chart_rels[i]
+
+    diag["new_sheet_rels_part"] = new_sheet_rels_part
+    diag["parts_in_output"]     = len(parts)   # updated after registration
+
+    # ── Write output ZIP ─────────────────────────────────────────────────────
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+        for name, data in parts.items():
+            zout.writestr(name, data)
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).write_bytes(buf.getvalue())
+
+    diag["output_path"]       = output_path
+    diag["output_size_bytes"] = len(buf.getvalue())
+    diag["parts_in_output"]   = len(parts)
+
+    return diag
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic report
+# ---------------------------------------------------------------------------
+
+def _print_report(diag: dict) -> None:
+    SEP = "=" * 62
+    print(f"\n{SEP}")
+    print("ZIP-LEVEL CLONE — DIAGNOSTIC REPORT")
+    print(SEP)
+
+    print("\n[DISCOVERY]")
+    print(f"  Source sheet part      : {diag['source_sheet_part']}")
+    print(f"  Source sheet name      : {diag['source_sheet_name']!r}")
+    print(f"  Main table             : {diag['main_table_name']!r}")
+    print(f"    part                 : {diag['main_table_part']}")
+    print(f"    id (source)          : {diag['main_table_id_src']}")
+    print(f"  Summary table          : {diag['summ_table_name']!r}")
+    print(f"    part                 : {diag['summ_table_part']}")
+    print(f"    id (source)          : {diag['summ_table_id_src']}")
+
+    print("\n[ALLOCATION]")
+    print(f"  New sheet part         : {diag['new_sheet_part']}")
+    print(f"  New sheet rels         : {diag['new_sheet_rels_part']}")
+    print(f"  New main table part    : {diag['new_table_main_part']}")
+    print(f"  New summ table part    : {diag['new_table_summ_part']}")
+    print(f"  New main table name    : {diag['new_main_table_name']!r}")
+    print(f"  New summ table name    : {diag['new_summ_table_name']!r}")
+    print(f"  New main table id      : {diag['new_main_table_id']}")
+    print(f"  New summ table id      : {diag['new_summ_table_id']}")
+    print(f"  New workbook sheetId   : {diag['new_sheet_id']}")
+    print(f"  New workbook rId       : {diag['new_rel_id']}")
+
+    print("\n[SUBSTITUTION CHECK]")
+    src  = diag["sr_in_source"]
+    cln  = diag["sr_in_clone"]
+    old  = diag["sr_old_in_clone"]
+    ok_a = "PASS" if src == cln else "FAIL"
+    ok_b = "PASS" if old == 0   else "FAIL"
+    print(f"  Old name '[' in source       : {src}")
+    print(f"  New name '[' in clone        : {cln}  [{ok_a}]")
+    print(f"  Old name '[' still in clone  : {old}  [{ok_b}]")
+
+    print("\n[CHART PRESERVATION]")
+    print(f"  New drawing part      : {diag['new_drawing_part']}")
+    print(f"  cNvPr id start        : {diag.get('drawing_cnvpr_id_start', 'n/a')}")
+    print(f"  New chart base number : {diag['new_chart_base']}")
+    print(f"  Chart formula patches : {diag['chart_formula_replacements']}")
+    ok_c = "PASS" if diag["chart_old_refs_remaining"] == 0 else "FAIL"
+    print(f"  Old sheet refs remain : {diag['chart_old_refs_remaining']}  [{ok_c}]")
+
+    print("\n[MANIFEST]")
+    print(f"  calcChain.xml deleted  : {diag['calc_chain_present']}")
+    print(f"  Parts in source        : {diag['parts_loaded']}")
+    print(f"  Parts in output        : {diag['parts_in_output']}")
+
+    print("\n[OUTPUT]")
+    print(f"  Path  : {diag['output_path']}")
+    print(f"  Size  : {diag['output_size_bytes']:,} bytes")
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    template_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_TEMPLATE
+    output_path   = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_OUTPUT
+
+    print(f"Template : {template_path}")
+    print(f"Output   : {output_path}")
+
+    diag = clone_saving_calculations(template_path, output_path)
+    _print_report(diag)
+    print("Done.")

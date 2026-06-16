@@ -724,7 +724,7 @@ def generate_multi_workbook(template_path, sheet_specs, output_path):
         asset_counts  — {tab_title: int} rows written per sheet
     """
     try:
-        from excel_clone_poc import clone_saving_calculations
+        from src.excel_clone_poc import clone_saving_calculations
     except ImportError as exc:
         raise RuntimeError(
             "generate_multi_workbook requires excel_clone_poc.py to be present "

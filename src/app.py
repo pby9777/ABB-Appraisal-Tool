@@ -19,10 +19,7 @@ import zipfile as zipf
 from flask import Flask, request, send_file, render_template, jsonify
 from src.fill_saving_calculations import run_fill, run_fill_multi, generate_multi_workbook
 
-app = Flask(
-    __name__,
-    template_folder="templates"
-)
+app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB
 
 BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
