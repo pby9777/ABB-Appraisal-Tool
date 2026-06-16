@@ -29,13 +29,10 @@ DATA_SOURCE = args[4] if len(args) > 4 else "Customer Input"
 
 # Template is fixed for this script
 _script_dir   = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = next(
-    (os.path.join(_script_dir, n) for n in
-     ['EA_Report_Template_Standard.docx', 'EA_Report_Template.docx']
-     if os.path.exists(os.path.join(_script_dir, n))),
-    None)
-if TEMPLATE_PATH is None:
-    print("ERROR: EA_Report_Template_Standard.docx not found in script folder")
+_template_dir = os.path.join(_script_dir, "report_templates")
+TEMPLATE_PATH = os.path.join(_template_dir, "ea_report_template_standard.docx")
+if not os.path.exists(TEMPLATE_PATH):
+    print("ERROR: ea_report_template_standard.docx not found in report_templates/")
     sys.exit(1)
 TEMPLATE_V1_PATH = TEMPLATE_PATH  # same for this script
 

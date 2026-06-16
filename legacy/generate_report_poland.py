@@ -35,12 +35,11 @@ PLANT       = args[2]
 RPT_DATE    = args[3] if len(args) > 3 else datetime.now().strftime("%m.%d.%Y")
 DATA_SOURCE = args[4] if len(args) > 4 else "Customer Input"
 
-_script_dir = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = next(
-    (os.path.join(_script_dir, n) for n in ['EA_Report_Template_Poland.docx']
-     if os.path.exists(os.path.join(_script_dir, n))), None)
-if TEMPLATE_PATH is None:
-    print("ERROR: EA_Report_Template_Poland.docx not found in script folder")
+_script_dir   = os.path.dirname(os.path.abspath(__file__))
+_template_dir = os.path.join(_script_dir, "report_templates")
+TEMPLATE_PATH = os.path.join(_template_dir, "ea_report_template_poland.docx")
+if not os.path.exists(TEMPLATE_PATH):
+    print("ERROR: ea_report_template_poland.docx not found in report_templates/")
     sys.exit(1)
 
 for path, label in [(XLSX_PATH, "Excel file"), (TEMPLATE_PATH, "Template")]:
