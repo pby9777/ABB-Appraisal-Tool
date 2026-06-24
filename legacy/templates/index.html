@@ -747,16 +747,88 @@ footer b { color: var(--red); }
           <div class="field">
             <span class="field-label">Currency <span class="unit">code</span></span>
             <select name="currency" id="inp-currency">
-              <option value="INR">INR – Indian Rupee</option>
-              <option value="EUR">EUR – Euro</option>
-              <option value="USD">USD – US Dollar</option>
-              <option value="NOK">NOK – Norwegian Krone</option>
-              <option value="SGD">SGD – Singapore Dollar</option>
-              <option value="SAR">SAR – Saudi Riyal</option>
-              <option value="GBP">GBP – British Pound</option>
               <option value="AED">AED – UAE Dirham</option>
-              <option value="SEK">SEK – Swedish Krona</option>
+              <option value="ARS">ARS – Argentine Peso</option>
+              <option value="AUD">AUD – Australian Dollar</option>
+              <option value="AZN">AZN – Azerbaijani Manat</option>
+              <option value="BAM">BAM – Bosnian Convertible Mark</option>
+              <option value="BDT">BDT – Bangladeshi Taka</option>
+              <option value="BGN">BGN – Bulgarian Lev</option>
+              <option value="BHD">BHD – Bahraini Dinar</option>
+              <option value="BND">BND – Brunei Dollar</option>
+              <option value="BOB">BOB – Bolivian Boliviano</option>
+              <option value="BRL">BRL – Brazilian Real</option>
+              <option value="BYN">BYN – Belarusian Ruble</option>
+              <option value="CAD">CAD – Canadian Dollar</option>
+              <option value="CHF">CHF – Swiss Franc</option>
+              <option value="CLP">CLP – Chilean Peso</option>
+              <option value="CNY">CNY – Chinese Yuan</option>
+              <option value="COP">COP – Colombian Peso</option>
+              <option value="CZK">CZK – Czech Koruna</option>
               <option value="DKK">DKK – Danish Krone</option>
+              <option value="DZD">DZD – Algerian Dinar</option>
+              <option value="EGP">EGP – Egyptian Pound</option>
+              <option value="EUR">EUR – Euro</option>
+              <option value="GBP">GBP – British Pound</option>
+              <option value="GEL">GEL – Georgian Lari</option>
+              <option value="GHS">GHS – Ghanaian Cedi</option>
+              <option value="HKD">HKD – Hong Kong Dollar</option>
+              <option value="HUF">HUF – Hungarian Forint</option>
+              <option value="IDR">IDR – Indonesian Rupiah</option>
+              <option value="ILS">ILS – Israeli New Shekel</option>
+              <option value="INR" selected>INR – Indian Rupee</option>
+              <option value="IQD">IQD – Iraqi Dinar</option>
+              <option value="IRR">IRR – Iranian Rial</option>
+              <option value="ISK">ISK – Icelandic Krona</option>
+              <option value="JMD">JMD – Jamaican Dollar</option>
+              <option value="JOD">JOD – Jordanian Dinar</option>
+              <option value="JPY">JPY – Japanese Yen</option>
+              <option value="KES">KES – Kenyan Shilling</option>
+              <option value="KRW">KRW – South Korean Won</option>
+              <option value="KWD">KWD – Kuwaiti Dinar</option>
+              <option value="KZT">KZT – Kazakhstani Tenge</option>
+              <option value="LBP">LBP – Lebanese Pound</option>
+              <option value="LKR">LKR – Sri Lankan Rupee</option>
+              <option value="LYD">LYD – Libyan Dinar</option>
+              <option value="MAD">MAD – Moroccan Dirham</option>
+              <option value="MDL">MDL – Moldovan Leu</option>
+              <option value="MMK">MMK – Myanmar Kyat</option>
+              <option value="MNT">MNT – Mongolian Tugrik</option>
+              <option value="MUR">MUR – Mauritian Rupee</option>
+              <option value="MXN">MXN – Mexican Peso</option>
+              <option value="MYR">MYR – Malaysian Ringgit</option>
+              <option value="MZN">MZN – Mozambican Metical</option>
+              <option value="NAD">NAD – Namibian Dollar</option>
+              <option value="NGN">NGN – Nigerian Naira</option>
+              <option value="NOK">NOK – Norwegian Krone</option>
+              <option value="NPR">NPR – Nepalese Rupee</option>
+              <option value="NZD">NZD – New Zealand Dollar</option>
+              <option value="OMR">OMR – Omani Rial</option>
+              <option value="PEN">PEN – Peruvian Sol</option>
+              <option value="PHP">PHP – Philippine Peso</option>
+              <option value="PKR">PKR – Pakistani Rupee</option>
+              <option value="PLN">PLN – Polish Zloty</option>
+              <option value="PYG">PYG – Paraguayan Guarani</option>
+              <option value="QAR">QAR – Qatari Riyal</option>
+              <option value="RON">RON – Romanian Leu</option>
+              <option value="RSD">RSD – Serbian Dinar</option>
+              <option value="RUB">RUB – Russian Ruble</option>
+              <option value="SAR">SAR – Saudi Riyal</option>
+              <option value="SEK">SEK – Swedish Krona</option>
+              <option value="SGD">SGD – Singapore Dollar</option>
+              <option value="THB">THB – Thai Baht</option>
+              <option value="TND">TND – Tunisian Dinar</option>
+              <option value="TRY">TRY – Turkish Lira</option>
+              <option value="TWD">TWD – Taiwan Dollar</option>
+              <option value="TZS">TZS – Tanzanian Shilling</option>
+              <option value="UAH">UAH – Ukrainian Hryvnia</option>
+              <option value="UGX">UGX – Ugandan Shilling</option>
+              <option value="USD">USD – US Dollar</option>
+              <option value="UYU">UYU – Uruguayan Peso</option>
+              <option value="VND">VND – Vietnamese Dong</option>
+              <option value="XAF">XAF – CFA Franc BEAC</option>
+              <option value="XOF">XOF – CFA Franc BOAS</option>
+              <option value="ZAR">ZAR – South African Rand</option>
             </select>
           </div>
 
@@ -1303,10 +1375,34 @@ footer b { color: var(--red); }
   }
 
   const CURRENCY_OPTS = [
-    ['INR','INR – Indian Rupee'],['EUR','EUR – Euro'],['USD','USD – US Dollar'],
-    ['NOK','NOK – Norwegian Krone'],['SGD','SGD – Singapore Dollar'],
-    ['SAR','SAR – Saudi Riyal'],['GBP','GBP – British Pound'],
-    ['AED','AED – UAE Dirham'],['SEK','SEK – Swedish Krona'],['DKK','DKK – Danish Krone'],
+    ['AED','AED – UAE Dirham'],['ARS','ARS – Argentine Peso'],['AUD','AUD – Australian Dollar'],
+    ['AZN','AZN – Azerbaijani Manat'],['BAM','BAM – Bosnian Convertible Mark'],['BDT','BDT – Bangladeshi Taka'],
+    ['BGN','BGN – Bulgarian Lev'],['BHD','BHD – Bahraini Dinar'],['BND','BND – Brunei Dollar'],
+    ['BOB','BOB – Bolivian Boliviano'],['BRL','BRL – Brazilian Real'],['BYN','BYN – Belarusian Ruble'],
+    ['CAD','CAD – Canadian Dollar'],['CHF','CHF – Swiss Franc'],['CLP','CLP – Chilean Peso'],
+    ['CNY','CNY – Chinese Yuan'],['COP','COP – Colombian Peso'],['CZK','CZK – Czech Koruna'],
+    ['DKK','DKK – Danish Krone'],['DZD','DZD – Algerian Dinar'],['EGP','EGP – Egyptian Pound'],
+    ['EUR','EUR – Euro'],['GBP','GBP – British Pound'],['GEL','GEL – Georgian Lari'],
+    ['GHS','GHS – Ghanaian Cedi'],['HKD','HKD – Hong Kong Dollar'],['HUF','HUF – Hungarian Forint'],
+    ['IDR','IDR – Indonesian Rupiah'],['ILS','ILS – Israeli New Shekel'],['INR','INR – Indian Rupee'],
+    ['IQD','IQD – Iraqi Dinar'],['IRR','IRR – Iranian Rial'],['ISK','ISK – Icelandic Krona'],
+    ['JMD','JMD – Jamaican Dollar'],['JOD','JOD – Jordanian Dinar'],['JPY','JPY – Japanese Yen'],
+    ['KES','KES – Kenyan Shilling'],['KRW','KRW – South Korean Won'],['KWD','KWD – Kuwaiti Dinar'],
+    ['KZT','KZT – Kazakhstani Tenge'],['LBP','LBP – Lebanese Pound'],['LKR','LKR – Sri Lankan Rupee'],
+    ['LYD','LYD – Libyan Dinar'],['MAD','MAD – Moroccan Dirham'],['MDL','MDL – Moldovan Leu'],
+    ['MMK','MMK – Myanmar Kyat'],['MNT','MNT – Mongolian Tugrik'],['MUR','MUR – Mauritian Rupee'],
+    ['MXN','MXN – Mexican Peso'],['MYR','MYR – Malaysian Ringgit'],['MZN','MZN – Mozambican Metical'],
+    ['NAD','NAD – Namibian Dollar'],['NGN','NGN – Nigerian Naira'],['NOK','NOK – Norwegian Krone'],
+    ['NPR','NPR – Nepalese Rupee'],['NZD','NZD – New Zealand Dollar'],['OMR','OMR – Omani Rial'],
+    ['PEN','PEN – Peruvian Sol'],['PHP','PHP – Philippine Peso'],['PKR','PKR – Pakistani Rupee'],
+    ['PLN','PLN – Polish Zloty'],['PYG','PYG – Paraguayan Guarani'],['QAR','QAR – Qatari Riyal'],
+    ['RON','RON – Romanian Leu'],['RSD','RSD – Serbian Dinar'],['RUB','RUB – Russian Ruble'],
+    ['SAR','SAR – Saudi Riyal'],['SEK','SEK – Swedish Krona'],['SGD','SGD – Singapore Dollar'],
+    ['THB','THB – Thai Baht'],['TND','TND – Tunisian Dinar'],['TRY','TRY – Turkish Lira'],
+    ['TWD','TWD – Taiwan Dollar'],['TZS','TZS – Tanzanian Shilling'],['UAH','UAH – Ukrainian Hryvnia'],
+    ['UGX','UGX – Ugandan Shilling'],['USD','USD – US Dollar'],['UYU','UYU – Uruguayan Peso'],
+    ['VND','VND – Vietnamese Dong'],['XAF','XAF – CFA Franc BEAC'],['XOF','XOF – CFA Franc BOAS'],
+    ['ZAR','ZAR – South African Rand'],
   ];
 
   function buildCardHTML(id, vals) {
