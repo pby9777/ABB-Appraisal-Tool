@@ -348,6 +348,73 @@ header {
 
 .field input::placeholder { color: var(--grey-300); font-size: 12px; }
 
+/* ── Report toggle / detail fields ─────────────────────────── */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0 16px;
+  border-bottom: 1px solid var(--grey-150);
+  margin-bottom: 16px;
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-row input[type=checkbox] { display: none; }
+.toggle-switch {
+  width: 40px; height: 22px;
+  background: var(--grey-300);
+  border-radius: 11px;
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  left: 3px; top: 3px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.toggle-row.active .toggle-switch { background: var(--red); }
+.toggle-row.active .toggle-switch::after { transform: translateX(18px); }
+.toggle-label { font-weight: 600; font-size: 14px; }
+.toggle-sub   { font-size: 12px; color: var(--grey-600); margin-top: 1px; }
+
+.rpt-fields { display: none; }
+.rpt-fields.visible { display: block; }
+
+.rpt-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 20px;
+}
+
+.rpt-note {
+  font-size: 11px;
+  color: var(--grey-600);
+  font-family: var(--mono);
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: var(--grey-50);
+  border-left: 3px solid var(--grey-300);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.exec-check-row {
+  display: flex; align-items: center; gap: 8px; margin-top: 14px;
+  font-size: 13px; color: var(--black); cursor: pointer; user-select: none;
+}
+.exec-check-row input[type=checkbox] {
+  accent-color: var(--red); width: 15px; height: 15px; flex-shrink: 0;
+}
+
+@media (max-width: 560px) {
+  .rpt-grid { grid-template-columns: 1fr; }
+}
+
 /* ── Output row ─────────────────────────────────────── */
 .out-row { display: flex; gap: 10px; align-items: flex-end; }
 .out-row .field { flex: 1; }
@@ -478,62 +545,6 @@ footer {
 }
 footer b { color: var(--red); }
 
-/* ── Report toggle row ──────────────────────────────── */
-.toggle-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 0 16px;
-  border-bottom: 1px solid var(--grey-150);
-  margin-bottom: 16px;
-  cursor: pointer;
-  user-select: none;
-}
-.toggle-row input[type=checkbox] { display: none; }
-.toggle-switch {
-  width: 40px; height: 22px;
-  background: var(--grey-300);
-  border-radius: 11px;
-  position: relative;
-  transition: background 0.2s;
-  flex-shrink: 0;
-}
-.toggle-switch::after {
-  content: '';
-  position: absolute;
-  left: 3px; top: 3px;
-  width: 16px; height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  transition: transform 0.2s;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-}
-.toggle-row.active .toggle-switch { background: var(--red); }
-.toggle-row.active .toggle-switch::after { transform: translateX(18px); }
-.toggle-label { font-weight: 600; font-size: 14px; }
-.toggle-sub   { font-size: 12px; color: var(--grey-600); margin-top: 1px; }
-
-/* ── Report detail fields ───────────────────────────── */
-.rpt-fields { display: none; }
-.rpt-fields.visible { display: block; }
-
-.rpt-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px 20px;
-}
-
-.rpt-note {
-  font-size: 11px;
-  color: var(--grey-600);
-  font-family: var(--mono);
-  margin-top: 12px;
-  padding: 8px 12px;
-  background: var(--grey-50);
-  border-left: 3px solid var(--grey-300);
-  border-radius: 0 var(--radius) var(--radius) 0;
-}
-
 /* ── Mode toggle bar ───────────────────────────────────────── */
 .mode-bar {
   display: flex;
@@ -629,7 +640,6 @@ footer b { color: var(--red); }
 @media (max-width: 560px) {
   .tmpl-grid { grid-template-columns: 1fr 1fr; }
   .ass-grid  { grid-template-columns: 1fr; }
-  .rpt-grid  { grid-template-columns: 1fr; }
   .page      { padding: 20px 14px 60px; }
   header     { padding: 0 16px; }
 }
@@ -653,7 +663,7 @@ footer b { color: var(--red); }
 <div class="page">
   <div class="page-head">
     <h1 class="page-title">ABB Energy Appraisal Tool</h1>
-    <p class="page-sub">Fill Excel template · Optionally generate Word report · Download both as a ZIP</p>
+    <p class="page-sub">Upload assessment · Validate input · Generate Saving Calculations workbook · Download Excel</p>
   </div>
 
   <form id="mainForm" enctype="multipart/form-data">
@@ -862,7 +872,7 @@ footer b { color: var(--red); }
         <div class="step-num" id="sn4">4</div>
         <div>
           <div class="card-label">Word Report (Optional)</div>
-          <div class="card-hint">Also generate the EA Word report from the filled Excel</div>
+          <div class="card-hint">Also generate the Standard EA Word report from the filled Excel</div>
         </div>
       </div>
       <div class="card-body">
@@ -873,7 +883,7 @@ footer b { color: var(--red); }
           <div class="toggle-switch"></div>
           <div>
             <div class="toggle-label">Generate Word Report</div>
-            <div class="toggle-sub">Creates an EA Report .docx alongside the filled Excel</div>
+            <div class="toggle-sub">Creates an EA Report .docx alongside the filled Excel — Standard template only</div>
           </div>
         </label>
 
@@ -899,21 +909,17 @@ footer b { color: var(--red); }
                      placeholder="MM.DD.YYYY — leave blank for today"/>
             </div>
 
-            <div class="field">
-              <span class="field-label">Report Region <span class="unit">auto from template</span></span>
-              <select name="report_type" id="inp-report-type">
-                <option value="">— auto (matches selected template) —</option>
-                <option value="standard">Standard (Global)</option>
-                <option value="cee">France / CEE</option>
-                <option value="poland">Poland</option>
-                <option value="xlatam">XLatam</option>
-              </select>
-            </div>
-
           </div>
+
+          <label class="exec-check-row">
+            <input type="checkbox" name="generate_executive" id="chk-executive" value="1"/>
+            <span>Generate Executive Report (Top-10)</span>
+          </label>
+
           <div class="rpt-note">
             Output will be a <b>.zip</b> containing the filled Excel + the Word report.
-            Customer name and Plant are used as the report title and output filename.
+            Unchecked generates the Complete Report (All Assets); checked generates the
+            Executive Report (Top-10). Available for the Standard template only.
           </div>
         </div>
 
@@ -1124,8 +1130,6 @@ footer b { color: var(--red); }
     const chk    = document.getElementById('chk-report');
     const row    = document.getElementById('rptToggleRow');
     const fields = document.getElementById('rptFields');
-    const ext    = document.getElementById('extTag');
-    const lbl    = document.getElementById('btnLabel');
 
     // The click fires before the checkbox state changes, so toggle manually
     const nowOn = !chk.checked;
@@ -1133,10 +1137,6 @@ footer b { color: var(--red); }
 
     row.classList.toggle('active', nowOn);
     fields.classList.toggle('visible', nowOn);
-    ext.textContent = nowOn ? '.zip' : '.xlsx';
-    if (!document.getElementById('genBtn').disabled) {
-      lbl.textContent = nowOn ? '⚡ Generate Excel + Report' : '⚡ Generate Filled Excel';
-    }
     hideBanners();
   }
 
@@ -1161,7 +1161,6 @@ footer b { color: var(--red); }
     }
 
     const formData = new FormData(document.getElementById('mainForm'));
-    // Ensure gen_report is included correctly
     if (!wantReport) formData.set('gen_report', '0');
     formData.delete('zip_files');
     for (const f of zipFiles.files) formData.append('zip_files', f);
@@ -1215,8 +1214,7 @@ footer b { color: var(--red); }
     } else if (currentMode === 'multi') {
       lbl.textContent = '⚡ Generate Multi-Sheet Workbook';
     } else {
-      lbl.textContent = document.getElementById('chk-report').checked
-        ? '⚡ Generate Excel + Report' : '⚡ Generate Filled Excel';
+      lbl.textContent = '⚡ Generate Filled Excel';
     }
   }
 
@@ -1248,8 +1246,7 @@ footer b { color: var(--red); }
     btn.disabled = false;
     lbl.textContent = mode === 'multi'
       ? '⚡ Generate Multi-Sheet Workbook'
-      : (document.getElementById('chk-report').checked
-          ? '⚡ Generate Excel + Report' : '⚡ Generate Filled Excel');
+      : '⚡ Generate Filled Excel';
     hideBanners();
   }
 

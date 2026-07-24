@@ -342,6 +342,81 @@ def _or_dash(v):
 
 
 # ---------------------------------------------------------------------------
+# Sort by Payback Period before writing (so the workbook's own, unmodified
+# Top-10 formulas -- SUMIF over the hardcoded row range 37:46 -- naturally
+# see the lowest-payback assets in that range)
+# ---------------------------------------------------------------------------
+# Payback depends on NPV, which is itself a 20-year discounted cash flow with
+# a depreciation tax shield -- values that only exist as the workbook's own
+# formulas, not as anything this filler computes. Determining sort order
+# therefore means asking the workbook's own formulas what each asset's
+# payback is (via excel_formula_engine, a generic Excel-formula evaluator --
+# see report_table_utils.py for why this is not a second, duplicated
+# implementation of the financial model), not hand-deriving it here.
+#
+# Only the Standard/Poland-style gated payback column ("Payback time, if NPV
+# Positive" = IF(NPV>0, Investment/Savings, "")) is recognized. Sorting is a
+# presentation nicety, not a requirement for a valid workbook -- any
+# template where this column isn't found, or whose formulas the engine can't
+# evaluate, is written in its original (unsorted) order instead, exactly as
+# before this feature existed.
+
+_PAYBACK_HEADER = "payback time, if npv positive"
+_NPV_HEADER = "npv"
+
+
+def _order_assessment_by_payback(ws, header_row, data_start, assessment, write_asset):
+    header_lookup = {
+        str(cell.value).strip().lower(): cell.column
+        for cell in ws[header_row] if cell.value is not None
+    }
+    payback_col = header_lookup.get(_PAYBACK_HEADER)
+    npv_col = header_lookup.get(_NPV_HEADER)
+    if payback_col is None or npv_col is None:
+        print("      Note: this template's payback column isn't the recognized "
+              "Standard/Poland pattern — writing assets in original order.")
+        return assessment
+
+    try:
+        report_gen_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                       "archive", "report_generation")
+        if report_gen_dir not in sys.path:
+            sys.path.insert(0, report_gen_dir)
+        from excel_formula_engine import FormulaEngine, FormulaError
+    except ImportError as exc:
+        print(f"      Note: formula engine unavailable ({exc}) — "
+              f"writing assets in original order.")
+        return assessment
+
+    # Preliminary write so the engine has real cell data to evaluate the
+    # NPV/payback formula chain against; the real write below overwrites
+    # every one of these cells again in the final (sorted) order.
+    for i, asset in enumerate(assessment):
+        write_asset(data_start + i, asset)
+
+    engine = FormulaEngine(ws, header_row=header_row, table_name=None)
+    resolved = 0
+
+    def sort_key(i):
+        nonlocal resolved
+        try:
+            payback = engine.get(data_start + i, payback_col)
+        except FormulaError:
+            payback = None
+        if isinstance(payback, (int, float)):
+            resolved += 1
+            return (0, float(payback))
+        return (1, 0.0)
+
+    order = sorted(range(len(assessment)), key=sort_key)
+    if assessment and resolved == 0:
+        print("      Note: could not evaluate payback for any asset in this "
+              "template — writing assets in original order.")
+        return assessment
+    return [assessment[i] for i in order]
+
+
+# ---------------------------------------------------------------------------
 # Fill one sheet (internal implementation)
 # ---------------------------------------------------------------------------
 
@@ -383,32 +458,37 @@ def _fill_ws(ws, assessment, input_assets, args):
         if col is not None:
             ws.cell(row=row, column=col).value = value
 
-    for i, asset in enumerate(assessment):
-        r        = data_start + i
+    def write_asset(row, asset):
         equip_id = asset["equip_id"]
         inp      = input_assets.get(equip_id, {})
 
-        w(r, "num",          asset["num"])
-        w(r, "equip_id",     equip_id)
-        w(r, "application",  inp.get("application", ""))
-        w(r, "energy_kwh",   asset["energy_kwh"])
-        w(r, "savings_kwh",  asset["savings_kwh"])
-        w(r, "investment",   asset["investment"])
+        w(row, "num",          asset["num"])
+        w(row, "equip_id",     equip_id)
+        w(row, "application",  inp.get("application", ""))
+        w(row, "energy_kwh",   asset["energy_kwh"])
+        w(row, "savings_kwh",  asset["savings_kwh"])
+        w(row, "investment",   asset["investment"])
         ie_val = inp.get("ie_class")
-        w(r, "ie_class",     "Not known" if ie_val is None else ie_val)
+        w(row, "ie_class",     "Not known" if ie_val is None else ie_val)
         motor_eff_val = inp.get("motor_eff")
         if motor_eff_val is not None:
-            w(r, "motor_eff", motor_eff_val)
-        w(r, "dol_vsd",      inp.get("dol_vsd", ""))
-        w(r, "flow_control", inp.get("flow_control", ""))
-        w(r, "output_kw",    inp.get("output_kw", ""))
-        w(r, "shaft_height", inp.get("shaft_height", 0))
-        w(r, "run_hours",    inp.get("run_hours", ""))
-        w(r, "avg_loading",  _or_dash(inp.get("avg_loading") or None))
-        w(r, "avg_flow",     _or_dash(inp.get("avg_flow")))
-        w(r, "avg_freq",     _or_dash(inp.get("avg_freq") or None))
-        w(r, "ess_motor",    asset["ess_motor"])
-        w(r, "ess_drive",    asset["ess_drive"])
+            w(row, "motor_eff", motor_eff_val)
+        w(row, "dol_vsd",      inp.get("dol_vsd", ""))
+        w(row, "flow_control", inp.get("flow_control", ""))
+        w(row, "output_kw",    inp.get("output_kw", ""))
+        w(row, "shaft_height", inp.get("shaft_height", 0))
+        w(row, "run_hours",    inp.get("run_hours", ""))
+        w(row, "avg_loading",  _or_dash(inp.get("avg_loading") or None))
+        w(row, "avg_flow",     _or_dash(inp.get("avg_flow")))
+        w(row, "avg_freq",     _or_dash(inp.get("avg_freq") or None))
+        w(row, "ess_motor",    asset["ess_motor"])
+        w(row, "ess_drive",    asset["ess_drive"])
+
+    ordered_assessment = _order_assessment_by_payback(
+        ws, header_row, data_start, assessment, write_asset
+    )
+    for i, asset in enumerate(ordered_assessment):
+        write_asset(data_start + i, asset)
 
     return len(assessment)
 
