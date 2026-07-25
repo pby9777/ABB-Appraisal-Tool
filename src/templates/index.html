@@ -523,6 +523,14 @@ footer b { color: var(--red); }
   gap: 14px 20px;
 }
 
+.exec-check-row {
+  display: flex; align-items: center; gap: 8px; margin-top: 14px;
+  font-size: 13px; color: var(--black); cursor: pointer; user-select: none;
+}
+.exec-check-row input[type=checkbox] {
+  accent-color: var(--red); width: 15px; height: 15px; flex-shrink: 0;
+}
+
 .rpt-note {
   font-size: 11px;
   color: var(--grey-600);
@@ -862,7 +870,7 @@ footer b { color: var(--red); }
         <div class="step-num" id="sn4">4</div>
         <div>
           <div class="card-label">Word Report (Optional)</div>
-          <div class="card-hint">Also generate the EA Word report from the filled Excel</div>
+          <div class="card-hint">Also generate the Standard EA Word report from the filled Excel</div>
         </div>
       </div>
       <div class="card-body">
@@ -873,7 +881,7 @@ footer b { color: var(--red); }
           <div class="toggle-switch"></div>
           <div>
             <div class="toggle-label">Generate Word Report</div>
-            <div class="toggle-sub">Creates an EA Report .docx alongside the filled Excel</div>
+            <div class="toggle-sub">Creates an EA Report .docx alongside the filled Excel — Standard template only</div>
           </div>
         </label>
 
@@ -899,21 +907,18 @@ footer b { color: var(--red); }
                      placeholder="MM.DD.YYYY — leave blank for today"/>
             </div>
 
-            <div class="field">
-              <span class="field-label">Report Region <span class="unit">auto from template</span></span>
-              <select name="report_type" id="inp-report-type">
-                <option value="">— auto (matches selected template) —</option>
-                <option value="standard">Standard (Global)</option>
-                <option value="cee">France / CEE</option>
-                <option value="poland">Poland</option>
-                <option value="xlatam">XLatam</option>
-              </select>
-            </div>
-
           </div>
+
+          <label class="exec-check-row">
+            <input type="checkbox" name="generate_executive" id="chk-executive" value="1"/>
+            <span>Generate Executive Report (Top-10)</span>
+          </label>
+
           <div class="rpt-note">
             Output will be a <b>.zip</b> containing the filled Excel + the Word report.
             Customer name and Plant are used as the report title and output filename.
+            Unchecked generates the Complete Report (All Assets); checked generates the
+            Executive Report (Top-10). Available for the Standard template only.
           </div>
         </div>
 

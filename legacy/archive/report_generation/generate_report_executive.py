@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-ABB Energy Appraisal – Complete Asset Report Generator
-Template: ea_report_template_standard_all_assets.docx
-Regions:  India, Norway, Australia, and all standard markets
+ABB Energy Appraisal – Executive Report Generator  (Phase 1: Scalar Tokens)
+Template: ea_report_template_standard_top 10.docx
+Regions:  Standard markets (India, LATAM, etc.)
 
 Usage:
-  python generate_report_standard.py  <saving_calc.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]
+  python generate_report_executive.py  <saving_calc.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]
 
 Requirements:
   pip install openpyxl
@@ -18,7 +18,7 @@ import openpyxl
 # ── CLI ───────────────────────────────────────────────────────────────────────
 args = sys.argv[1:]
 if len(args) < 3:
-    print('Usage: python generate_report_standard.py  <excel.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]')
+    print('Usage: python generate_report_executive.py  <excel.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]')
     sys.exit(1)
 
 XLSX_PATH   = args[0]
@@ -29,7 +29,7 @@ DATA_SOURCE = args[4] if len(args) > 4 else "Customer Input"
 
 _script_dir   = os.path.dirname(os.path.abspath(__file__))
 _template_dir = os.path.join(_script_dir, "report_templates")
-TEMPLATE_NAME = "Spain_Global Switch_EA_Report_V1.docx"
+TEMPLATE_NAME = "Spain_Global Switch_EA_Report_V1_top-10.docx"
 TEMPLATE_PATH = os.path.join(_template_dir, TEMPLATE_NAME)
 
 for path, label in [(XLSX_PATH, "Excel file"), (TEMPLATE_PATH, "Template")]:
@@ -160,6 +160,11 @@ _RECALC_CHECKS = [
     (23, 3,        "IRR, NPV+ group"),
     (25, 4,        "BEV count"),
     (34, 5,        "NPV+ group totals row (row 34)"),
+    (33, 5,        "Top-10 (lowest payback) totals row (row 33)"),
+    (19, 4,        "Top-10 NPV"),
+    (20, 4,        "Top-10 Investment"),
+    (21, 4,        "Top-10 Payback"),
+    (23, 4,        "Top-10 IRR"),
     (37, COL_NPV,  "First asset's NPV (per-asset formula)"),
 ]
 
@@ -192,8 +197,11 @@ PAYBACK_TIME   = cv(21, 3)
 CO2_SAVINGS    = cv(22, 3)
 IRR_VALUE      = cv(23, 3)
 BEV_COUNT      = cv(25, 4)
+TOP10_PAYBACK  = cv(21, 4)
+TOP10_NPV      = cv(19, 4)
+TOP10_INVEST   = cv(20, 4)
+TOP10_IRR      = cv(23, 4)
 
-# Payback sensitivity data (rows 19-23, col 20=price delta, col 22=payback)
 SENSITIVITY = []
 for r in range(19, 24):
     delta   = cv(r, 20)
@@ -212,7 +220,9 @@ for r in range(19, 24):
 # actual end of data is detected the same way fill_saving_calculations.py
 # itself bounds writes to this sheet (SCAN_LIMIT there) — by scanning the
 # fixed structural row window and stopping at the first row whose '#' cell is
-# genuinely blank/invalid, which the loop below already does.
+# genuinely blank/invalid, which the loop below already does. This list also
+# feeds the All-Assets appendix tables further down, so under-scanning here
+# would silently truncate that appendix too, not just the Complete report.
 ASSET_START_ROW  = 37
 ASSET_ROW_CEILING = 1100  # matches the sheet's own B37:B1100 formula range
 assets = []
@@ -292,12 +302,15 @@ def _payback_sort_key(a):
         return (1, 0.0)
 
 
-# Single sort, reused for every section of the report — this is the report's
-# only "business logic": sorting/filtering already-workbook-sourced data for
-# presentation, never recomputing a financial metric.
+# Single sort, reused for every section of the report. The Executive report's
+# main body is simply the first 10 of this list; the appendix is the whole
+# list -- both in the exact same order the workbook's own rank-based row 33
+# aggregates (and therefore the Top-10 KPIs read above) were computed over.
 assets_sorted = sorted(assets, key=_payback_sort_key)
+top10 = assets_sorted[:10]
+NT = len(top10)
 
-print(f"  {NA} assets, {NPV_POS_CNT} NPV+ (from workbook)")
+print(f"  {NA} assets, {NPV_POS_CNT} NPV+, {NT} in Top-{NT} (lowest payback, from workbook)")
 
 # ── Formatting helpers ────────────────────────────────────────────────────────
 SYM = CURRENCY
@@ -335,7 +348,25 @@ from report_table_utils import (
     replace_within_row, replace_within_textboxes,
 )
 
-# ── NPV+ group totals (for the Energy Savings table's total row) ────────────
+
+# ── Top-10 (lowest payback) group totals ─────────────────────────────────────
+# Read directly from the workbook's own row 33 aggregate — now rank-based
+# (=SUMPRODUCT(($BF$37:$BF$1100<=10)*(...))), i.e. the true lowest-10-payback
+# group, not recomputed from the asset list. TOP10_NPV/TOP10_INVEST/
+# TOP10_PAYBACK/TOP10_IRR were already read from column D (rows 19-23) above;
+# these are the same row-33 group's remaining per-column totals for the
+# Top-10 table's own totals row.
+t10_e_cons  = cv(33, 5)  or 0   # E33
+t10_e_cost  = cv(33, 6)  or 0   # F33
+t10_co2_c   = cv(33, 7)  or 0   # G33
+t10_sav_kwh = cv(33, 8)  or 0   # H33
+t10_sav_c   = cv(33, 9)  or 0   # I33
+t10_pct     = cv(33, 10) or 0   # J33 = IFERROR(H33/E33,"-")
+t10_invest  = cv(33, 11) or 0   # K33
+t10_co2_sav = cv(33, 13) or 0   # M33
+t10_npv     = cv(33, 17) or 0   # Q33
+
+# ── NPV+ group totals (for total row of NPV+ table) ──────────────────────────
 # Read directly from the workbook's own row 34 aggregate
 # (=SUMIF($Q$37:$Q$1100,">0", ...)) — not recomputed from the asset list.
 npv_e_cons  = cv(34, 5)  or 0   # E34
@@ -366,6 +397,16 @@ REQUIRED_SCALAR_TOKENS = [
     '{{IRR_DISPLAY}}',
     '{{CO2_SAVINGS}}',
     '{{BEV_COUNT}}',
+    '{{TOP10_ANNUAL_SAVINGS}}',
+    '{{TOP10_INVEST}}',
+    '{{TOP10_NPV}}',
+    '{{TOP10_PAYBACK}}',
+    '{{TOTAL_TOP10_ENERGY_CONS}}',
+    '{{TOTAL_TOP10_ENERGY_COST}}',
+    '{{TOTAL_TOP10_CO2_CONS}}',
+    '{{TOTAL_TOP10_SAVINGS_KWH}}',
+    '{{TOTAL_TOP10_SAVING_PCT}}',
+    '{{TOTAL_TOP10_CO2_AVOIDED}}',
     '{{TOTAL_NPV_ENERGY_CONS}}',
     '{{TOTAL_NPV_ENERGY_COST}}',
     '{{TOTAL_NPV_CO2_CONS}}',
@@ -393,15 +434,27 @@ def extract_scalar_values():
         '{{ELEC_PRICE}}':        f"{float(ELEC_PRICE):.2f}",
         '{{CURRENCY}}':          CURRENCY,
         '{{CO2_INTENSITY}}':     str(CO2_INTENSITY),
-        # NPV+ summary KPIs (summary page — read directly from the workbook's NPV+ group)
+        # NPV+ summary KPIs (summary page)
         '{{ANNUAL_SAVINGS}}':    fmt(ANNUAL_SAVINGS),
         '{{NPV_INVEST}}':        fmt(INVEST_COST),
         '{{NPV_VALUE}}':         fmt(NPV_VALUE),
         '{{PAYBACK}}':           fmtyrs(PAYBACK_TIME),
-        '{{IRR_DISPLAY}}':       fmtirr(IRR_VALUE),
+        '{{IRR_DISPLAY}}':       fmtirr(TOP10_IRR),     # includes %, e.g. "42%"
         '{{CO2_SAVINGS}}':       str(round(float(CO2_SAVINGS or 0) / 1000)),
         '{{BEV_COUNT}}':         str(round(float(BEV_COUNT or 0))),
-        # NPV+ total row (Energy Savings table)
+        # Top-10 summary KPIs
+        '{{TOP10_ANNUAL_SAVINGS}}': fmt(t10_sav_c),
+        '{{TOP10_INVEST}}':         fmt(t10_invest),
+        '{{TOP10_NPV}}':            fmt(t10_npv),
+        '{{TOP10_PAYBACK}}':        fmtyrs(TOP10_PAYBACK),
+        # Top-10 total row
+        '{{TOTAL_TOP10_ENERGY_CONS}}':  fmt(t10_e_cons),
+        '{{TOTAL_TOP10_ENERGY_COST}}':  fmt(t10_e_cost),
+        '{{TOTAL_TOP10_CO2_CONS}}':     fmt(t10_co2_c),
+        '{{TOTAL_TOP10_SAVINGS_KWH}}':  fmt(t10_sav_kwh),
+        '{{TOTAL_TOP10_SAVING_PCT}}':   fmtpct(t10_pct),
+        '{{TOTAL_TOP10_CO2_AVOIDED}}':  fmt(t10_co2_sav),
+        # NPV+ total row
         '{{TOTAL_NPV_ENERGY_CONS}}':    fmt(npv_e_cons),
         '{{TOTAL_NPV_ENERGY_COST}}':    fmt(npv_e_cost),
         '{{TOTAL_NPV_CO2_CONS}}':       fmt(npv_co2_c),
@@ -419,18 +472,20 @@ def replace_scalars(xml, token_map):
 
 
 def validate_required_tokens(xml, footer_xmls, required_tokens):
-    """Pre-flight: verify all required tokens exist in the template."""
+    """Pre-flight: verify all required tokens exist in the template.
+    Exits with error if any are missing (template was not properly tokenized)."""
     full = xml + ''.join(footer_xmls)
     missing = [t for t in required_tokens if t not in full]
     if missing:
-        print("ERROR: Template is missing required tokens:")
+        print("ERROR: Template is missing required tokens (run prepare_templates.py first):")
         for t in missing:
             print(f"  {t}")
         sys.exit(1)
 
 
 def validate_no_unreplaced_tokens(xml, footer_xmls, skip_tokens=None):
-    """Post-flight: verify no {{...}} tokens remain after replacement."""
+    """Post-flight: verify no {{...}} tokens remain after replacement.
+    skip_tokens: set of tokens intentionally left for later phases."""
     skip_tokens = skip_tokens or set()
     full = xml + ''.join(footer_xmls)
     remaining = re.findall(r'\{\{[A-Z0-9_]+\}\}', full)
@@ -442,117 +497,47 @@ def validate_no_unreplaced_tokens(xml, footer_xmls, skip_tokens=None):
         sys.exit(1)
 
 
-# ── Load template (full zip, so chart XML / embedded workbook can be edited) ─
+# ── Main ──────────────────────────────────────────────────────────────────────
 print(f"Loading template: {TEMPLATE_NAME}")
 with open(TEMPLATE_PATH, 'rb') as f:
-    tmpl_bytes = f.read()
-zin = zipfile.ZipFile(io.BytesIO(tmpl_bytes), 'r')
-all_files = {name: zin.read(name) for name in zin.namelist()}
-zin.close()
+    template_bytes = f.read()
 
-doc_xml = all_files['word/document.xml'].decode('utf-8')
-footer_names = sorted(n for n in all_files if re.match(r'word/footer\d+\.xml', n))
-footer_xmls  = [all_files[n].decode('utf-8') for n in footer_names]
+zin  = zipfile.ZipFile(io.BytesIO(template_bytes))
+names = zin.namelist()
 
-# NOTE: Spain_Global Switch_EA_Report_V1.docx is a real, previously filled-in
-# sample report (not a {{TOKEN}}-tokenized template) - it has none of the
-# REQUIRED_SCALAR_TOKENS, so the token-based Phase 1 above (extract_scalar_
-# values/replace_scalars/validate_required_tokens/validate_no_unreplaced_
-# tokens) does not apply to it and is intentionally not called here. Those
-# functions are left unchanged for any tokenized template that may use them.
-# Scalar substitution for this template is done further below, by literal
-# value, after Phase 2 - see that block for why the ordering is reversed.
+doc_xml = zin.read('word/document.xml').decode('utf-8')
 
-# ── Charts: update cached data points so Word renders real figures ──────────
-# Chart XML caches its data as <c:numRef><c:f>...</c:f><c:numCache>...points...
-# </c:numCache></c:numRef>. Word displays the cache, not a live link, so we
-# overwrite the cached <c:v> values in place — this is robust to whatever
-# sheet/cell the template's embedded workbook happens to reference.
+footer_names = sorted(n for n in names if re.match(r'word/footer\d+\.xml', n))
+footer_xmls  = [zin.read(n).decode('utf-8') for n in footer_names]
 
-def _set_single_point_values(ctxt, values):
-    """Overwrite the single <c:pt idx="0"> value of the first len(values)
-    <c:numRef> blocks found, in document order."""
-    refs = list(re.finditer(r'<c:numRef>.*?</c:numRef>', ctxt, re.DOTALL))
-    out, prev = [], 0
-    for ref, val in zip(refs, values):
-        out.append(ctxt[prev:ref.start()])
-        seg = re.sub(r'(<c:pt idx="0"><c:v>)[^<]*(</c:v>)',
-                     lambda m: f'{m.group(1)}{val:.10f}{m.group(2)}',
-                     ref.group(), count=1)
-        out.append(seg)
-        prev = ref.end()
-    out.append(ctxt[prev:])
-    return ''.join(out)
-
-
-def _set_last_multi_point_values(ctxt, values):
-    """Overwrite every <c:pt> value inside the LAST <c:numRef> block found —
-    that block holds the plotted series regardless of how many numRefs
-    (categories + series, or just series) the template's chart declares."""
-    refs = list(re.finditer(r'<c:numRef>.*?</c:numRef>', ctxt, re.DOTALL))
-    if not refs:
-        return ctxt
-    ref = refs[-1]
-    seg = ref.group()
-    pts = list(re.finditer(r'<c:pt idx="(\d+)"><c:v>[^<]*</c:v></c:pt>', seg))
-    new_seg = seg
-    for pt, val in list(zip(pts, values))[::-1]:
-        idx = pt.group(1)
-        new_seg = new_seg[:pt.start()] + f'<c:pt idx="{idx}"><c:v>{val}</c:v></c:pt>' + new_seg[pt.end():]
-    return ctxt[:ref.start()] + new_seg + ctxt[ref.end():]
-
-
-# Chart 1: Energy Consumption bar (before / after) — 2 single-point series
-cons_before = float(CONSUMP_BEFORE or 0)
-cons_after  = cons_before - float(SAVINGS_KWH or 0)
-if 'word/charts/chart1.xml' in all_files:
-    ctxt = all_files['word/charts/chart1.xml'].decode('utf-8')
-    ctxt = _set_single_point_values(ctxt, [cons_before, cons_after])
-    all_files['word/charts/chart1.xml'] = ctxt.encode('utf-8')
-    print(f"  Chart 1 (Energy Consumption): {fmt(cons_before)} kWh -> {fmt(cons_after)} kWh")
-
-# Chart 2: NPV positive pie chart — update embedded Excel workbook + cache
-if 'word/embeddings/Microsoft_Excel_Worksheet.xlsx' in all_files:
-    emb_bytes = all_files['word/embeddings/Microsoft_Excel_Worksheet.xlsx']
-    ewb = openpyxl.load_workbook(io.BytesIO(emb_bytes))
-    ews = ewb.active
-    ews['B2'] = NPV_POS_CNT
-    ews['B3'] = TOTAL_ASSETS - NPV_POS_CNT
-    ews['A2'] = 'NPV Positive'
-    ews['A3'] = 'Remaining Assets'
-    buf2 = io.BytesIO()
-    ewb.save(buf2)
-    all_files['word/embeddings/Microsoft_Excel_Worksheet.xlsx'] = buf2.getvalue()
-    if 'word/charts/chart2.xml' in all_files:
-        c2txt = all_files['word/charts/chart2.xml'].decode('utf-8')
-        c2txt = _set_last_multi_point_values(c2txt, [NPV_POS_CNT, TOTAL_ASSETS - NPV_POS_CNT])
-        c2txt = c2txt.replace('<c:v>2nd Qtr</c:v>', '<c:v>Remaining Assets</c:v>')
-        all_files['word/charts/chart2.xml'] = c2txt.encode('utf-8')
-    print(f"  Chart 2 (NPV pie): {NPV_POS_CNT} NPV+ / {TOTAL_ASSETS - NPV_POS_CNT} remaining")
-
-# Chart 3: Payback sensitivity — overwrite the plotted payback series
-if 'word/charts/chart3.xml' in all_files and SENSITIVITY:
-    ctxt = all_files['word/charts/chart3.xml'].decode('utf-8')
-    ctxt = _set_last_multi_point_values(ctxt, [s[1] for s in SENSITIVITY])
-    all_files['word/charts/chart3.xml'] = ctxt.encode('utf-8')
-    print(f"  Chart 3 (Payback sensitivity): {[round(s[1], 2) for s in SENSITIVITY]}")
+# NOTE: Spain_Global Switch_EA_Report_V1_top-10.docx is a real, previously
+# filled-in sample report (not a {{TOKEN}}-tokenized template) - it has none
+# of the REQUIRED_SCALAR_TOKENS, so the token-based Phase 1 above (extract_
+# scalar_values/replace_scalars/validate_required_tokens/validate_no_
+# unreplaced_tokens) does not apply to it and is intentionally not called
+# here. Those functions are left unchanged for any tokenized template that
+# may use them. Scalar substitution for this template is done further below,
+# by literal value, after Phase 2 - see that block for why the ordering is
+# reversed.
 
 # ── Phase 2: Dynamic Table Rendering ─────────────────────────────────────────
 # Field-map keys are normalize_header(template header text) — see report_table_utils.
+# '#' / 'application' / etc. below match the templates' actual header row, not
+# arbitrary invented labels.
 
 _ENERGY_FIELD_MAP = {
-    '#':                     lambda a: str(a['num']),
-    'customer equipment id': lambda a: a['tag'],
-    'application':           lambda a: a['load'],
-    'energy. cons (kwh)':    lambda a: fmt(a['e_cons']),
-    'energy cost':           lambda a: fmt(a['e_cost']),
-    'co2 cons. (kg)':        lambda a: fmt(a['co2_cons']),
-    'energy savings (kwh)':  lambda a: fmt(a['e_sav_kwh']),
-    'energy cost savings':   lambda a: fmt(a['e_sav_cost']),
-    'energy saving (%)':     lambda a: fmtpct(a['e_sav_pct']),
-    'investment':            lambda a: fmt(a['invest']),
-    'payback time (years)':  lambda a: fmtyrs(a['payback']),
-    'avoided co2 (kg)':      lambda a: fmt(a['co2_sav']),
+    '#':                    lambda a: str(a['num']),
+    'customer equipment id':lambda a: a['tag'],
+    'application':          lambda a: a['load'],
+    'energy. cons (kwh)':   lambda a: fmt(a['e_cons']),
+    'energy cost':          lambda a: fmt(a['e_cost']),
+    'co2 cons. (kg)':       lambda a: fmt(a['co2_cons']),
+    'energy savings (kwh)': lambda a: fmt(a['e_sav_kwh']),
+    'energy cost savings':  lambda a: fmt(a['e_sav_cost']),
+    'energy saving (%)':    lambda a: fmtpct(a['e_sav_pct']),
+    'investment':           lambda a: fmt(a['invest']),
+    'payback time (years)': lambda a: fmtyrs(a['payback']),
+    'avoided co2 (kg)':     lambda a: fmt(a['co2_sav']),
 }
 
 # The Application Details table has no "Customer Equipment ID" column — its
@@ -585,40 +570,56 @@ _DETAILS_REQUIRED = [
 ]
 
 # Every template has exactly one Energy Savings table and one Application
-# Details table. This (Complete Asset) report populates each with every
-# ranked asset; generate_report_executive.py populates the same two
-# sections with only the top 10. Same anchors, same renderer — only the
-# asset list passed in differs.
+# Details table. The Executive report populates each with the top-10 ranked
+# assets; the Complete Asset report (generate_report_standard.py) populates
+# the same two sections with every asset. Same anchors, same renderer —
+# only the asset list passed in differs.
 print("Rendering dynamic tables (Phase 2)...")
 
 doc_xml = render_table_section(
-    doc_xml, 'Energy Savings',
+    doc_xml, 'Energy Savings (Top 10)',
     anchor='Energy savings with ABB premium efficiency solutions',
+    asset_list=top10, field_map=_ENERGY_FIELD_MAP, required=_ENERGY_REQUIRED,
+    n_totals=2,
+)
+doc_xml = render_table_section(
+    doc_xml, 'Application Details (Top 10)',
+    anchor='Application Details – Top 10',
+    asset_list=top10, field_map=_DETAILS_FIELD_MAP, required=_DETAILS_REQUIRED,
+    n_totals=0,
+)
+
+# Unlike the older tokenized top-10 template this engine was originally built
+# for, Spain_Global Switch_EA_Report_V1_top-10.docx also carries a genuine
+# All-Assets appendix after the Top-10 section (Application Details – All
+# Assets / Details of Recommendation – All Assets - the heading names are
+# swapped relative to what they actually contain: the "Application Details"
+# heading precedes the Energy-Savings-shaped table, and "Details of
+# Recommendation" precedes the motor-spec-shaped table; confirmed against
+# each table's own header row, not assumed from the heading text). This is
+# real, final content, not a stale leftover to be trimmed - so it is
+# populated with every asset here instead of being dropped.
+doc_xml = render_table_section(
+    doc_xml, 'Energy Savings (All Assets, appendix)',
+    anchor='Application Details – All Assets',
     asset_list=assets_sorted, field_map=_ENERGY_FIELD_MAP, required=_ENERGY_REQUIRED,
     n_totals=1,
 )
 doc_xml = render_table_section(
-    doc_xml, 'Application Details',
-    anchor='Application Details',
+    doc_xml, 'Application Details (All Assets, appendix)',
+    anchor='Details of Recommendation – All Assets',
     asset_list=assets_sorted, field_map=_DETAILS_FIELD_MAP, required=_DETAILS_REQUIRED,
     n_totals=0,
 )
 
-# Safety net for older, not-yet-cleaned templates that still carry a stale
-# duplicate appendix section — no-op on templates that are already clean.
-doc_xml = trim_stale_appendix(doc_xml)
-
 print("  Phase 2 complete.")
 
 # ── Phase 1 (literal): scalar substitution for the un-tokenized V1 template ──
-# Run this AFTER Phase 2, not before: Phase 2 has just overwritten every
-# per-asset data row with this customer's real numbers, so the only literal
-# Global Switch sample values still left in doc_xml are the cover-info table,
-# the Summary KPI tiles, the payback/IRR text-box labels, and the Energy
-# Savings table's totals row(s) - exactly what this block replaces. Doing it
-# in this order means a coincidental match against some other asset's number
-# (e.g. another asset that also happens to have a 2.9yr payback) can't happen,
-# because that data has already been replaced by the time this runs.
+# Run this AFTER Phase 2 for the same reason as generate_report_standard.py:
+# every per-asset row (Top-10 and the All-Assets appendix) has already been
+# overwritten with this customer's real numbers by the time this runs, so a
+# bare value here can only match the cover table / KPI tiles / totals rows /
+# text boxes it's meant for - not some other asset's own cell.
 print("Substituting scalar values (literal, no {{TOKEN}} markers in this template)...")
 
 _cover_replacements = [
@@ -632,9 +633,12 @@ _cover_replacements = [
 ]
 
 _kpi_replacements = [
-    ('EUR 31,229',          f"{CURRENCY} {fmt(ANNUAL_SAVINGS)}"),
-    ('EUR 89,528',          f"{CURRENCY} {fmt(INVEST_COST)}"),
-    ('EUR 184,638',         f"{CURRENCY} {fmt(NPV_VALUE)}"),
+    ('EUR 26,529',          f"{CURRENCY} {fmt(t10_sav_c)}"),        # Top-10 annual savings
+    ('EUR 31,229',          f"{CURRENCY} {fmt(ANNUAL_SAVINGS)}"),   # overall annual savings
+    ('EUR 49,928',          f"{CURRENCY} {fmt(t10_invest)}"),       # Top-10 investment
+    ('EUR 89,528',          f"{CURRENCY} {fmt(INVEST_COST)}"),      # overall investment
+    ('EUR 178,280',         f"{CURRENCY} {fmt(t10_npv)}"),          # Top-10 NPV
+    ('EUR 184,638',         f"{CURRENCY} {fmt(NPV_VALUE)}"),        # overall NPV
     ('33 tCO2',             f"{round(float(CO2_SAVINGS or 0) / 1000)} tCO2"),
     ('64 Vehicles',         f"{round(float(BEV_COUNT or 0))} Vehicles"),
 ]
@@ -643,19 +647,45 @@ doc_xml = replace_literal_paragraphs(doc_xml, _cover_replacements + _kpi_replace
 
 # Payback / IRR are overlaid as a text box on top of a donut-shaped image
 # (not a table cell, not a native chart). Scoped to text-box content only -
-# a bare "28%" is otherwise too generic to match document-wide once Phase 2
-# has written this customer's own per-asset savings-% data.
+# a bare "42%" is otherwise too generic to match document-wide once Phase 2
+# has written this customer's own per-asset savings-% data. This report's
+# donut always shows the Top-10 figures (matching {{IRR_DISPLAY}}'s use of
+# TOP10_IRR in the token-based version of this same script).
 doc_xml = replace_within_textboxes(doc_xml, [
-    ('2.9 yrs',             f"{fmtyrs(PAYBACK_TIME)} yrs"),
-    ('28%',                 fmtirr(IRR_VALUE)),
+    ('1.9 yrs',             f"{fmtyrs(TOP10_PAYBACK)} yrs"),
+    ('42%',                 fmtirr(TOP10_IRR)),
 ])
 
-# Energy Savings table totals row: bare numeric cells (no currency prefix -
-# the column header already states the unit/currency) plus the row's own
-# "(21)" label. Scoped to the row itself via replace_within_row, since Phase 2
-# has already written this customer's real per-asset data and a bare value
-# like "2.9" or "23%" could otherwise coincidentally match some other asset's
-# own cell elsewhere in the table.
+# NPV-positive fraction on the Summary tile ("21/45 motors NPV positive") -
+# same mixed value+caption paragraph as generate_report_standard.py; scoped
+# to that one paragraph so bare "21"/"45" runs elsewhere are not touched.
+_m = re.search(r'<w:p[ >].*?NPV positive.*?</w:p>', doc_xml, re.DOTALL)
+if _m:
+    _scoped = replace_literal_runs(_m.group(), [
+        ('21', str(NPV_POS_CNT)),
+        ('45', str(TOTAL_ASSETS)),
+    ], warn_ambiguous=False)
+    doc_xml = doc_xml[:_m.start()] + _scoped + doc_xml[_m.end():]
+else:
+    print("  WARNING: 'NPV positive' paragraph not found, motors fraction left unchanged.")
+
+# Top-10 Energy Savings table's own totals row - bare numeric cells, scoped
+# to that row so they can't collide with an unrelated asset's own value.
+doc_xml = replace_within_row(doc_xml, 'Total - Top 10', [
+    ('5,85,356',            fmt(t10_e_cons)),
+    ('81,950',              fmt(t10_e_cost)),
+    ('87,803',              fmt(t10_co2_c)),
+    ('1,89,495',            fmt(t10_sav_kwh)),
+    ('26,529',              fmt(t10_sav_c)),
+    ('32%',                 fmtpct(t10_pct)),
+    ('49,928',              fmt(t10_invest)),
+    ('1.9',                 fmtyrs(TOP10_PAYBACK)),
+    ('28,424',              fmt(t10_co2_sav)),
+])
+
+# NPV-positive-assets totals row - appears twice (once under the Top-10
+# table, once under the All-Assets appendix table); replace_within_row
+# updates every matching row it finds.
 doc_xml = replace_within_row(doc_xml, 'Total NPV Positive Assets (21)', [
     ('Total NPV Positive Assets (21)', f"Total NPV Positive Assets ({NPV_POS_CNT})"),
     ('9,61,687',            fmt(npv_e_cons)),
@@ -669,65 +699,32 @@ doc_xml = replace_within_row(doc_xml, 'Total NPV Positive Assets (21)', [
     ('33,460',              fmt(npv_co2_sav)),
 ])
 
-# NPV-positive fraction on the Summary tile ("21/45 motors NPV positive") is
-# one paragraph mixing the value and a static caption across several runs -
-# replace just the two number runs, not the whole paragraph, so the caption's
-# own run formatting is left untouched. Scoped to that one paragraph only:
-# bare "21"/"45" runs are too generic to touch document-wide now that Phase 2
-# has already written this customer's own per-asset "#" values (which could
-# legitimately be 21 or 45 for a large enough fleet).
-_m = re.search(r'<w:p[ >].*?NPV positive.*?</w:p>', doc_xml, re.DOTALL)
-if _m:
-    _scoped = replace_literal_runs(_m.group(), [
-        ('21', str(NPV_POS_CNT)),
-        ('45', str(TOTAL_ASSETS)),
-    ], warn_ambiguous=False)
-    doc_xml = doc_xml[:_m.start()] + _scoped + doc_xml[_m.end():]
-else:
-    print("  WARNING: 'NPV positive' paragraph not found, motors fraction left unchanged.")
-
-# Footer report date: a plain regex match (not the fragile literal-date
-# substring match some of the older per-region scripts use) so it keeps
-# working regardless of which sample date happens to be baked into the
-# template's footer today.
+# Footer report date: plain regex match, robust regardless of which sample
+# date happens to be baked into the template's footer today.
 footer_xmls = [re.sub(r'\d{4}-\d{2}-\d{2}', RPT_DATE_ISO, fx) for fx in footer_xmls]
 
 print("  Scalar substitution complete.")
 
-# ── Save output docx ──────────────────────────────────────────────────────────
-safe_customer = re.sub(r'[\\/:*?"<>|]', '_', args[1])
-safe_plant    = re.sub(r'[\\/:*?"<>|]', '_', PLANT)
-out_name = f"{safe_customer}_{safe_plant}_EA_Report.docx"
-out_path = os.path.join(os.path.dirname(os.path.abspath(XLSX_PATH)), out_name)
-
-all_files['word/document.xml'] = re.sub(r'<w:trHeight[^/]*/>', '', doc_xml).encode('utf-8')
-for name, fx in zip(footer_names, footer_xmls):
-    all_files[name] = fx.encode('utf-8')
-
-# TOC auto-update: add <w:updateFields> to settings.xml
-if 'word/settings.xml' in all_files:
-    try:
-        stg = all_files['word/settings.xml'].decode('utf-8')
-        if 'updateFields' not in stg:
-            stg = stg.replace('</w:settings>', '<w:updateFields w:val="1"/></w:settings>')
-        all_files['word/settings.xml'] = stg.encode('utf-8')
-    except Exception:
-        pass
+# ── Write output docx ─────────────────────────────────────────────────────────
+safe_customer = re.sub(r'[^\w\- ]', '', CUSTOMER).strip().replace(' ', '_')
+safe_plant    = re.sub(r'[^\w\- ]', '', PLANT).strip().replace(' ', '_')
+out_name      = f"{safe_customer}_{safe_plant}_EA_Report_Executive.docx"
+out_path      = os.path.join(os.path.dirname(os.path.abspath(XLSX_PATH)), out_name)
 
 buf = io.BytesIO()
 with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zout:
-    for name, data in all_files.items():
-        zout.writestr(name, data)
+    for name in names:
+        if name == 'word/document.xml':
+            zout.writestr(name, doc_xml.encode('utf-8'))
+        elif name in footer_names:
+            zout.writestr(name, footer_xmls[footer_names.index(name)].encode('utf-8'))
+        else:
+            zout.writestr(name, zin.read(name))
+
+zin.close()
+
 with open(out_path, 'wb') as f:
     f.write(buf.getvalue())
 
-print()
-print(f"  Done!  ->  {out_path}")
-print(f"  {CUSTOMER} | {PLANT} | {CURRENCY} | {NA} assets | {NPV_POS_CNT} NPV+")
-print(f"  Annual savings : {SYM} {fmt(ANNUAL_SAVINGS)}")
-print(f"  Investment     : {SYM} {fmt(INVEST_COST)}")
-print(f"  Payback        : {fmtyrs(PAYBACK_TIME)} yrs")
-print(f"  NPV            : {SYM} {fmt(NPV_VALUE)}")
-print(f"  IRR            : {fmtirr(IRR_VALUE)}")
-if SENSITIVITY:
-    print(f"  Sensitivity    : {[f'{s[0]:+.0%}->{s[1]:.1f}yrs' for s in SENSITIVITY]}")
+print(f"\nDone: {out_name}")
+print(f"Saved to: {out_path}")

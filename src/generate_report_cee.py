@@ -34,14 +34,10 @@ RPT_DATE    = args[3] if len(args) > 3 else datetime.now().strftime("%m.%d.%Y")
 DATA_SOURCE = args[4] if len(args) > 4 else "Customer Input"
 
 _script_dir   = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = os.path.join(_script_dir, 'EA_Report_Template_CEE.docx')
+_template_dir = os.path.join(_script_dir, "report_templates")
+TEMPLATE_PATH     = os.path.join(_template_dir, "ea_report_template_cee.docx")
 # Standard template needed to borrow Appendix table XML when NA > 10
-TEMPLATE_STD_PATH = next(
-    (os.path.join(_script_dir, n) for n in
-     ['EA_Report_Template_Standard.docx', 'EA_Report_Template.docx']
-     if os.path.exists(os.path.join(_script_dir, n))),
-    TEMPLATE_PATH
-)
+TEMPLATE_STD_PATH = os.path.join(_template_dir, "ea_report_template_standard.docx")
 
 for path, label in [(XLSX_PATH, "Excel file"), (TEMPLATE_PATH, "Template docx")]:
     if not os.path.exists(path):

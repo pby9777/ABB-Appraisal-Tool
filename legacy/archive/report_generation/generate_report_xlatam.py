@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-ABB Energy Appraisal – Standard Report Generator
-Template: EA_Report_Template_Standard.docx
-Regions:  India, Norway, Australia, and all standard markets
+ABB Energy Appraisal – X-Latam Report Generator
+Template: EA_Report_Template_XLatam.docx
+Regions:  Singapore, Colombia, Brazil, and all markets without Take-Back programme
 
 Usage:
-  python generate_report_standard.py  <saving_calc.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]
+  python generate_report_xlatam.py  <saving_calc.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]
 
 Requirements:
   pip install openpyxl
@@ -18,7 +18,7 @@ import openpyxl
 # ── CLI ───────────────────────────────────────────────────────────────────────
 args = sys.argv[1:]
 if len(args) < 3:
-    print('Usage: python generate_report_standard.py  <excel.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]')
+    print('Usage: python generate_report_xlatam.py  <excel.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]')
     sys.exit(1)
 
 XLSX_PATH   = args[0]
@@ -27,17 +27,12 @@ PLANT       = args[2]
 RPT_DATE    = args[3] if len(args) > 3 else datetime.now().strftime("%m.%d.%Y")
 DATA_SOURCE = args[4] if len(args) > 4 else "Customer Input"
 
-# Template is fixed for this script
 _script_dir   = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = next(
-    (os.path.join(_script_dir, n) for n in
-     ['EA_Report_Template_Standard.docx', 'EA_Report_Template.docx']
-     if os.path.exists(os.path.join(_script_dir, n))),
-    None)
-if TEMPLATE_PATH is None:
-    print("ERROR: EA_Report_Template_Standard.docx not found in script folder")
+_template_dir = os.path.join(_script_dir, "report_templates")
+TEMPLATE_PATH = os.path.join(_template_dir, "ea_report_template_xlatam.docx")
+if not os.path.exists(TEMPLATE_PATH):
+    print("ERROR: ea_report_template_xlatam.docx not found in report_templates/")
     sys.exit(1)
-TEMPLATE_V1_PATH = TEMPLATE_PATH  # same for this script
 
 for path, label in [(XLSX_PATH, "Excel file"), (TEMPLATE_PATH, "Template")]:
     if not os.path.exists(path):
@@ -437,9 +432,6 @@ if IRR_VALUE is None or float(IRR_VALUE or 0) == 0:
         IRR_VALUE = _irr_all
 
 # ── Sensitivity fallback for NPV+ mode (Excel cells uncached/error) ───────────
-# NO_NPV_MODE already computes SENSITIVITY from assets above.
-# This handles the case where there ARE NPV+ assets but Excel sensitivity rows
-# returned None or error strings — leaving SENSITIVITY empty after the Excel read.
 if _SENSITIVITY_PENDING and npv_pos:
     _ns = sum(float(a.get('e_sav_cost') or 0) for a in npv_pos)
     _ni = sum(float(a.get('invest')     or 0) for a in npv_pos)
@@ -588,8 +580,8 @@ def _finalize_xml(xml_str):
     return re.sub(r'<w:trHeight[^/]*/>', '', xml_str)
 
 
-# ── This is the Standard pipeline ────────────────────────────────────────────
-print("  Template: Standard")
+# ── This is the X-Latam pipeline (no Take-Back column) ───────────────────────
+print("  Template: X-Latam (no Take-Back)")
 print("Updating scalar values...")
 for old, new in [
     ('ION EXCHANGE',              CUSTOMER),
@@ -634,7 +626,7 @@ if NA <= 10:
 else:
     print(f"  Summary: 'Top 10' kept in labels (NA={NA} > 10)")
 
-# ── Step 2: Footer dates (BUG FIX #1) ────────────────────────────────────────
+# ── Step 2: Footer dates ──────────────────────────────────────────────────────
 print(f"Updating footer dates: 2025-09-19 → {RPT_DATE_ISO}")
 for fname in ['word/footer1.xml', 'word/footer2.xml',
               'word/footer3.xml', 'word/header1.xml',
@@ -646,10 +638,7 @@ for fname in ['word/footer1.xml', 'word/footer2.xml',
         txt = txt.replace('2025-09-19', RPT_DATE_ISO)
         all_files[fname] = txt.encode('utf-8')
 
-# ── Step 3: Charts – NPV-positive data, fully editable (FIX #2 & #3) ─────────
-# Strategy: replace <c:numRef><c:f>ExternalSheet!$X$Y</c:f><c:numCache>...</c:numCache></c:numRef>
-# with     <c:numLit>...</c:numLit>  — self-contained literal values, always editable in Word.
-
+# ── Step 3: Charts – NPV-positive data, fully editable ────────────────────────
 cons_before = float(CONSUMP_BEFORE or 0)     # row 16 col 3 = "Consumption before with NPV+ve"
 cons_after  = cons_before - float(SAVINGS_KWH or 0)  # NPV+ consumption after upgrading
 
@@ -671,13 +660,10 @@ def numlit_5pt(fmt_code, values):
             f'</c:numLit>')
 
 # Chart 1: Energy Consumption bar chart — pick unit based on magnitude
-# GWh (≥ 1 GWh = 1,000,000 kWh): formatCode="#.0,,\ "GWh""  (,,  = ÷1,000,000)
-# MWh (≥ 1 MWh = 1,000 kWh):    formatCode="#.0,\ "MWh""   (,   = ÷1,000)
-# kWh (< 1,000 kWh):             formatCode="#,##0\ "kWh""  (no division)
 if cons_before >= 1_000_000:
     unit_label = 'GWh'
-    datalabel_fmt = r'#.0,,\ &quot;GWh&quot;'   # format code stored in XML (& escaped)
-    numlit_fmt    = r'#,##0_);[Red]\(#,##0\)'    # raw kWh stored in numLit; chart divides
+    datalabel_fmt = r'#.0,,\ &quot;GWh&quot;'
+    numlit_fmt    = r'#,##0_);[Red]\(#,##0\)'
     disp_before   = f'{cons_before/1e6:.1f} GWh'
     disp_after    = f'{cons_after/1e6:.1f} GWh'
 elif cons_before >= 1_000:
@@ -695,7 +681,6 @@ else:
 
 if 'word/charts/chart1.xml' in all_files:
     ctxt = all_files['word/charts/chart1.xml'].decode('utf-8')
-    # 1. Replace data values (numRef → numLit, raw kWh)
     ctxt = re.sub(
         r'<c:numRef><c:f>Saving_Calculations!\$C\$16</c:f>.*?</c:numRef>',
         numlit_1pt(numlit_fmt, cons_before),
@@ -704,10 +689,7 @@ if 'word/charts/chart1.xml' in all_files:
         r'<c:numRef><c:f>Saving_Calculations!\$C\$18</c:f>.*?</c:numRef>',
         numlit_1pt(numlit_fmt, cons_after),
         ctxt, flags=re.DOTALL)
-    # 2. Update both data-label format codes (GWh → chosen unit)
-    ctxt = ctxt.replace(
-        '#.0,,\\ &quot;GWh&quot;',
-        datalabel_fmt)
+    ctxt = ctxt.replace('#.0,,\\ &quot;GWh&quot;', datalabel_fmt)
     all_files['word/charts/chart1.xml'] = ctxt.encode('utf-8')
     print(f"  Chart 1 (Energy Consumption): {disp_before} → {disp_after}  [{unit_label}, editable]")
 
@@ -717,14 +699,13 @@ if 'word/embeddings/Microsoft_Excel_Worksheet.xlsx' in all_files:
     emb_bytes = all_files['word/embeddings/Microsoft_Excel_Worksheet.xlsx']
     ewb = openpyxl.load_workbook(io.BytesIO(emb_bytes))
     ews = ewb.active
-    ews['B2'] = NPV_POS_CNT                # NPV positive count
-    ews['B3'] = NA - NPV_POS_CNT           # non-NPV+ count
+    ews['B2'] = NPV_POS_CNT
+    ews['B3'] = NA - NPV_POS_CNT
     ews['A2'] = 'NPV Positive'
     ews['A3'] = 'Remaining Assets'
     buf2 = io.BytesIO()
     ewb.save(buf2)
     all_files['word/embeddings/Microsoft_Excel_Worksheet.xlsx'] = buf2.getvalue()
-    # Also update the cached values in chart2.xml
     if 'word/charts/chart2.xml' in all_files:
         c2txt = all_files['word/charts/chart2.xml'].decode('utf-8')
         c2txt = c2txt.replace('<c:v>192</c:v>', f'<c:v>{NPV_POS_CNT}</c:v>')
@@ -733,12 +714,12 @@ if 'word/embeddings/Microsoft_Excel_Worksheet.xlsx' in all_files:
         all_files['word/charts/chart2.xml'] = c2txt.encode('utf-8')
     print(f"  Chart 2 (NPV pie): {NPV_POS_CNT} NPV+ / {NA - NPV_POS_CNT} remaining  [editable]")
 
-# Chart 3: Payback sensitivity bar chart (NPV+ based) — dual-pass update
-# Pass 1: replace known formula refs with numLit literals (handles standard templates)
+# Chart 3: Payback sensitivity bar chart — dual-pass update
+# Pass 1: replace known formula refs with numLit literals (catches any sheet-name variant)
 # Pass 2: update numCache values directly (handles templates with different/no formula refs)
 if 'word/charts/chart3.xml' in all_files and SENSITIVITY:
     ctxt = all_files['word/charts/chart3.xml'].decode('utf-8')
-    # Pass 1: formula ref → numLit (catches any sheet-name variant)
+    # Pass 1
     ctxt = re.sub(
         r'<c:numRef><c:f>[^<]*\$T\$19:\$T\$23</c:f>.*?</c:numRef>',
         numlit_5pt('0%', [s[0] for s in SENSITIVITY]),
@@ -751,11 +732,9 @@ if 'word/charts/chart3.xml' in all_files and SENSITIVITY:
         r'<c:strRef><c:f>[^<]*\$S\$18[^<]*</c:f>.*?</c:strRef>',
         '<c:v>Payback time sensitivity to electricity price</c:v>',
         ctxt, flags=re.DOTALL)
-    # Pass 2: directly overwrite numCache in every <c:numRef> block so Word
-    # renders the correct values even when Pass 1 regex didn't match
+    # Pass 2: directly overwrite numCache in the 2nd <c:numRef> (Y-axis payback values)
     _refs = list(re.finditer(r'<c:numRef>', ctxt))
     if len(_refs) >= 2:
-        # 2nd numRef = Y-axis (payback values)
         _rs     = _refs[1].start()
         _re_end = ctxt.find('</c:numRef>', _rs) + len('</c:numRef>')
         _seg    = ctxt[_rs:_re_end]
@@ -777,8 +756,7 @@ if 'word/charts/chart3.xml' in all_files and SENSITIVITY:
     print(f"  Chart 3 (Payback sensitivity): {[round(s[1],2) for s in SENSITIVITY]}  [editable]")
 
 # ── Step 5a: Summary page — remove IRR row when NPV ≤ 0 ─────────────────────
-# NPV/Investment swap is handled above in the scalar map.
-# IRR row (TR 15) is always at index 15 (before top-N table); remove when NPV ≤ 0.
+# IRR row is TR[15]; remove when NPV ≤ 0.
 NO_NPV = float(TOP10_NPV or 0) <= 0
 if NO_NPV:
     tr_pre = get_tr_pos(xml)
@@ -794,21 +772,20 @@ tr = get_tr_pos(xml)
 tmpl_t10 = xml[tr[19 + irr_adj][0]:tr[19 + irr_adj][1]]
 
 def v_top10(a):
-    row = [str(a["num"]), a["tag"],
-           fmt(a["e_cons"]), fmt(a["e_cost"]), fmt(a["co2_cons"]),
-           fmt(a["e_sav_kwh"]), fmt(a["invest"]), fmt(a["e_sav_cost"]),
-           fmtpct(a["e_sav_pct"]),
-           f"{fmtyrs(a['payback'])} " if a["payback"] else "",
-           f"{fmt(a['co2_sav'])} "]
-    row.append("\u2713")   # Take-Back ✓
-    return row
+    # X-Latam: 11 columns — no Take-Back column
+    return [str(a["num"]), a["tag"],
+            fmt(a["e_cons"]), fmt(a["e_cost"]), fmt(a["co2_cons"]),
+            fmt(a["e_sav_kwh"]), fmt(a["invest"]), fmt(a["e_sav_cost"]),
+            fmtpct(a["e_sav_pct"]),
+            f"{fmtyrs(a['payback'])} " if a["payback"] else "",
+            f"{fmt(a['co2_sav'])} "]
 
 def build_top10_row(a):
     """Fill a top-table row; apply white shading to NPV-negative assets."""
     row_xml = fill_row(tmpl_t10, v_top10(a))
     is_npv_neg = (a["npv"] is None or float(a["npv"] or 0) <= 0) and not NO_NPV_MODE
     if is_npv_neg:
-        # Cells 1-10: white; cells 11-12 (CO2 + Take-Back ✓): keep C5E0B3
+        # Cells 0-9: white; cell 10 (CO2, last column): keep green
         tc_starts = [m.start() for m in re.finditer(r'<w:tc>', row_xml)]
         if len(tc_starts) >= 11:
             cut = tc_starts[10]   # start of 11th cell (0-indexed)
@@ -845,7 +822,6 @@ tr  = get_tr_pos(xml)
 
 nc  = float(CONSUMP_BEFORE or 0)
 # Show "Total NPV Positive Assets" row whenever its count differs from top-N count
-# This covers: NPV+ > NT (more assets than shown) AND NPV+ < NT (padded with NPV-)
 if NPV_POS_CNT != NT and NPV_POS_CNT > 0:
     r30 = strip_ids(xml[tr[I_TR2][0]:tr[I_TR2][1]])
     r30 = nth_wt(r30, 0, f"Total NPV Positive Assets ({NPV_POS_CNT})")
@@ -878,7 +854,6 @@ def v_app(a):
 I_APP_FIRST_a = I_APP_FIRST + npv_adj
 I_APP_LAST_a  = I_APP_LAST  + npv_adj
 
-# Always build App Details motor table for top-N assets
 print(f"Building Application Details ({NT} rows)...")
 tmpl_app = xml[tr[I_APP_FIRST_a][0]:tr[I_APP_FIRST_a][1]]
 block = "".join(fill_row(tmpl_app, v_app(a)) for a in top10)
@@ -886,7 +861,6 @@ xml = xml[:tr[I_APP_FIRST_a][0]] + block + xml[tr[I_APP_LAST_a][1]:]
 tr  = get_tr_pos(xml)
 
 # ── Step 8: Appendix all-assets ───────────────────────────────────────────────
-# Always use normal formula (App Details was always built)
 I_APP2_FIRST = 23 + 2*NT + irr_adj + npv_adj
 I_APP2_LAST  = I_APP2_FIRST + 17
 
@@ -904,8 +878,8 @@ def v_app2(a):
     sav_e = fmt(a["e_sav_kwh"])  if float(a["e_sav_kwh"]  or 0) >= 0 else f"-{fmt(abs(float(a['e_sav_kwh'])))}"
     sav_c = fmt(a["e_sav_cost"]) if float(a["e_sav_cost"] or 0) >= 0 else f"-{fmt(abs(float(a['e_sav_cost'])))}"
     return [str(a["num"]), a["tag"],
-            fmt(a["e_cons"]), fmt(a["e_cost"]), fmt(a["co2_cons"]),
-            sav_e, fmt(a["invest"]), sav_c,
+            fmt(a["e_cons"]), fmt(a["e_cost"]),
+            fmt(a["co2_cons"]), sav_e, fmt(a["invest"]), sav_c,
             f"{fmtyrs(a['payback'])} " if a["payback"] else "",
             co2_s, fmtpct(a["e_sav_pct"]), npv_s]
 
@@ -922,40 +896,17 @@ tmpl_det = xml[tr[I_DET_FIRST][0]:tr[I_DET_FIRST][1]]
 block_det = "".join(fill_row(tmpl_det, v_app(a)) for a in assets_by_num)
 xml = xml[:tr[I_DET_FIRST][0]] + block_det + xml[tr[I_DET_LAST][1]:]
 
-# ── Step 10: Trim Appendix — keep only Calculation Methodology + NPV text ────
-# Remove: "Application Details" heading + table + "Details of Recommendation"
-#          heading + table (everything between Appendix heading and Calc Methodology)
-# Keep:   Calculation Methodology table + NPV Methodology paragraphs
-#
-# Strategy: find end of "Appendix" heading paragraph, then cut forward to the
-# <w:p> containing "Calculation Methodology" (search after the Appendix para).
-# This removes ALL content between them regardless of what was left by steps 7-9.
-
-def find_para_start(xml, search_text, after=0):
-    """Return the start of the <w:p...> that contains search_text."""
-    idx = xml.find(search_text, after)
-    if idx == -1: return -1
-    return xml.rfind('<w:p ', 0, idx)
-
-def find_para_end(xml, para_start):
-    """Return the char position just after the </w:p> that starts at para_start."""
-    end = xml.find('</w:p>', para_start)
-    return end + len('</w:p>') if end != -1 else -1
-
-# Find the "Appendix" heading paragraph in the BODY (not the TOC).
-# Anchor: "*Data is listed as total annual figures" always appears just before
-# the Appendix heading in the body, giving us a reliable body-only anchor.
+# ── Step 10: Trim Appendix when NA < 10 ──────────────────────────────────────
+# Remove App Details + Det Rec tables; keep only Calculation Methodology + NPV
 data_listed_pos = xml.rfind('Data is listed as total annual')
 if data_listed_pos == -1:
     data_listed_pos = 0  # fallback
 appendix_para_start = find_para_start(xml, '>Appendix<', data_listed_pos)
 appendix_para_end   = find_para_end(xml, appendix_para_start)
 
-# Find "Calculation Methodology" paragraph AFTER the body Appendix heading
 calcmeth_para = find_para_start(xml, '>Calculation Methodology<', appendix_para_end)
 
 if NA <= 10 and appendix_para_end > 0 and calcmeth_para > appendix_para_end:
-    # 10 or fewer assets: cut App Det + Det Rec tables from appendix body
     xml = xml[:appendix_para_end] + xml[calcmeth_para:]
     print(f"Appendix trimmed (NA={NA} <= 10): kept only Calculation Methodology + NPV Methodology")
 elif NA > 10:
