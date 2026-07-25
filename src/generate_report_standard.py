@@ -6,6 +6,17 @@ Regions:  India, Norway, Australia, and all standard markets
 
 Usage:
   python generate_report_standard.py  <saving_calc.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]
+                                       [--template <filename>] [--suffix <suffix>]
+
+  --template  Word template filename to use, resolved under report_templates/.
+              Defaults to ea_report_template_standard.docx (the Complete /
+              All-Assets report). Pass ea_report_template_standard_top10.docx
+              for the Executive / Top-10 report. The template determines the
+              report structure; this script's rendering logic is unchanged
+              regardless of which template is selected.
+  --suffix    Optional suffix inserted before .docx in the output filename
+              (e.g. "_Executive"), so two variants for the same customer/plant
+              don't overwrite each other.
 
 Requirements:
   pip install openpyxl
@@ -16,9 +27,28 @@ from datetime import datetime
 import openpyxl
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
-args = sys.argv[1:]
+_raw_args = sys.argv[1:]
+
+TEMPLATE_FILENAME = "ea_report_template_standard.docx"
+OUTPUT_SUFFIX = ""
+
+# Pull out optional --template/--suffix flags (order-independent), leaving only
+# the original positional args (xlsx, customer, plant, date, data_source) behind.
+args = []
+_i = 0
+while _i < len(_raw_args):
+    if _raw_args[_i] == "--template" and _i + 1 < len(_raw_args):
+        TEMPLATE_FILENAME = _raw_args[_i + 1]
+        _i += 2
+    elif _raw_args[_i] == "--suffix" and _i + 1 < len(_raw_args):
+        OUTPUT_SUFFIX = _raw_args[_i + 1]
+        _i += 2
+    else:
+        args.append(_raw_args[_i])
+        _i += 1
+
 if len(args) < 3:
-    print('Usage: python generate_report_standard.py  <excel.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]')
+    print('Usage: python generate_report_standard.py  <excel.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]  [--template <filename>] [--suffix <suffix>]')
     sys.exit(1)
 
 XLSX_PATH   = args[0]
@@ -27,12 +57,12 @@ PLANT       = args[2]
 RPT_DATE    = args[3] if len(args) > 3 else datetime.now().strftime("%m.%d.%Y")
 DATA_SOURCE = args[4] if len(args) > 4 else "Customer Input"
 
-# Template is fixed for this script
+# Template file is selected via --template (defaults to the Complete report)
 _script_dir   = os.path.dirname(os.path.abspath(__file__))
 _template_dir = os.path.join(_script_dir, "report_templates")
-TEMPLATE_PATH = os.path.join(_template_dir, "ea_report_template_standard.docx")
+TEMPLATE_PATH = os.path.join(_template_dir, TEMPLATE_FILENAME)
 if not os.path.exists(TEMPLATE_PATH):
-    print("ERROR: ea_report_template_standard.docx not found in report_templates/")
+    print(f"ERROR: {TEMPLATE_FILENAME} not found in report_templates/")
     sys.exit(1)
 TEMPLATE_V1_PATH = TEMPLATE_PATH  # same for this script
 
@@ -963,7 +993,7 @@ else:
 # ── Save output docx ──────────────────────────────────────────────────────────
 safe_c   = re.sub(r'[\\/:*?"<>|]', '_', args[1])
 safe_p   = re.sub(r'[\\/:*?"<>|]', '_', PLANT)
-out_name = f"{safe_c}_{safe_p}_EA_Report.docx"
+out_name = f"{safe_c}_{safe_p}_EA_Report{OUTPUT_SUFFIX}.docx"
 out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), out_name)
 
 # TOC auto-update: add <w:updateFields> to settings.xml

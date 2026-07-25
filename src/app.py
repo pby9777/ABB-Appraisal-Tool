@@ -132,10 +132,11 @@ def generate():
         )
 
         # ── Report generation (optional) ────────────────────────────────────
-        customer   = request.form.get("customer", "").strip()
-        plant      = request.form.get("plant", "").strip()
-        rpt_date   = request.form.get("rpt_date", "").strip()
-        gen_report = request.form.get("gen_report", "0") == "1"
+        customer          = request.form.get("customer", "").strip()
+        plant             = request.form.get("plant", "").strip()
+        rpt_date          = request.form.get("rpt_date", "").strip()
+        gen_report        = request.form.get("gen_report", "0") == "1"
+        generate_executive = request.form.get("generate_executive", "0") == "1"
 
         # Override report script if user explicitly chose a region
         report_type = request.form.get("report_type", "").strip()
@@ -152,6 +153,16 @@ def generate():
             cmd = [sys.executable, script_path, excel_out, customer, plant]
             if rpt_date:
                 cmd.append(rpt_date)
+
+            # Standard report has two frozen templates: Complete (All Assets,
+            # default) and Executive (Top-10). The checkbox only selects which
+            # one is used — it has no effect on CEE/Poland/XLatam reports.
+            if script_name == "generate_report_standard.py":
+                if generate_executive:
+                    cmd += ["--template", "ea_report_template_standard_top10.docx",
+                            "--suffix", "_Executive"]
+                else:
+                    cmd += ["--template", "ea_report_template_standard.docx"]
 
             # Force UTF-8 I/O so Unicode chars (→ arrows etc.) don't crash on Windows cp1252
             _env = os.environ.copy()

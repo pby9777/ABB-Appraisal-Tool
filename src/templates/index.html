@@ -523,6 +523,14 @@ footer b { color: var(--red); }
   gap: 14px 20px;
 }
 
+.exec-check-row {
+  display: flex; align-items: center; gap: 8px; margin-top: 14px;
+  font-size: 13px; color: var(--black); cursor: pointer; user-select: none;
+}
+.exec-check-row input[type=checkbox] {
+  accent-color: var(--red); width: 15px; height: 15px; flex-shrink: 0;
+}
+
 .rpt-note {
   font-size: 11px;
   color: var(--grey-600);
@@ -911,9 +919,18 @@ footer b { color: var(--red); }
             </div>
 
           </div>
+
+          <label class="exec-check-row">
+            <input type="checkbox" name="generate_executive" id="chk-executive" value="1"/>
+            <span>Generate Executive Report (Top-10)</span>
+          </label>
+
           <div class="rpt-note">
             Output will be a <b>.zip</b> containing the filled Excel + the Word report.
             Customer name and Plant are used as the report title and output filename.
+            Unchecked generates the Complete Report (All Assets); checked generates the
+            Executive Report (Top-10). Standard region only — has no effect for
+            CEE / Poland / XLatam.
           </div>
         </div>
 
