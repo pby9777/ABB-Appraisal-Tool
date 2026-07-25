@@ -11,7 +11,7 @@ Requirements:
   pip install openpyxl
 """
 
-import sys, os, re, math, io, zipfile
+import sys, os, re, math, io, zipfile, shutil
 from datetime import datetime
 import openpyxl
 
@@ -168,8 +168,13 @@ if cells_are_cached(ws, _RECALC_CHECKS):
 else:
     print("  Workbook formulas not cached — recalculating...")
     RECALCED_PATH = recalculate_workbook(XLSX_PATH)
+    wb.close()  # release the stale-cache copy before loading the recalculated one
     wb = openpyxl.load_workbook(RECALCED_PATH, data_only=True)
     ws = _find_sc_sheet(wb)
+    # The recalculated file has now been fully parsed into `wb` above, so its
+    # on-disk temp copy (and the tempdir recalculate_workbook() created for
+    # it) is no longer needed.
+    shutil.rmtree(os.path.dirname(RECALCED_PATH), ignore_errors=True)
     # Fail loudly if recalculation still didn't populate these cells — never
     # silently fall back to computing them ourselves.
     verify_recalculated(ws, _RECALC_CHECKS)
@@ -522,6 +527,7 @@ if 'word/embeddings/Microsoft_Excel_Worksheet.xlsx' in all_files:
     ews['A3'] = 'Remaining Assets'
     buf2 = io.BytesIO()
     ewb.save(buf2)
+    ewb.close()
     all_files['word/embeddings/Microsoft_Excel_Worksheet.xlsx'] = buf2.getvalue()
     if 'word/charts/chart2.xml' in all_files:
         c2txt = all_files['word/charts/chart2.xml'].decode('utf-8')
@@ -714,12 +720,10 @@ if 'word/settings.xml' in all_files:
     except Exception:
         pass
 
-buf = io.BytesIO()
-with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zout:
+with zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED) as zout:
     for name, data in all_files.items():
         zout.writestr(name, data)
-with open(out_path, 'wb') as f:
-    f.write(buf.getvalue())
+wb.close()
 
 print()
 print(f"  Done!  ->  {out_path}")

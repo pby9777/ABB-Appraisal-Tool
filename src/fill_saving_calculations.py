@@ -187,6 +187,7 @@ def read_assessment_data(path):
             "ess_motor":   row[13],
             "ess_drive":   row[14],
         })
+    wb.close()
     return records
 
 
@@ -283,6 +284,7 @@ def read_input_assets(path):
             "avg_flow":     avg_flow,
             "avg_freq":     avg_freq,
         }
+    wb.close()
     return assets
 
 
@@ -615,10 +617,12 @@ def run_fill(template_path, zip_paths, output_path,
 
     wb     = openpyxl.load_workbook(template_path)
     sheets = find_saving_sheets(wb)
+    sheet_titles = [ws.title for ws in sheets]
     for ws in sheets:
         _fill_ws(ws, assessment, input_assets, args)
     wb.save(output_path)
-    return len(assessment), [ws.title for ws in sheets]
+    wb.close()
+    return len(assessment), sheet_titles
 
 
 def run_fill_multi(template_path, sheet_specs, output_path):

@@ -126,6 +126,7 @@ def recalculate_workbook(xlsx_path):
     out_dir = tempfile.mkdtemp(prefix="recalc_")
     recalced_path = os.path.join(out_dir, os.path.basename(xlsx_path))
     wb.save(recalced_path)
+    wb.close()
     return recalced_path
 
 

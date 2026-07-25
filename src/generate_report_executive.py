@@ -11,7 +11,7 @@ Requirements:
   pip install openpyxl
 """
 
-import sys, os, re, math, io, zipfile
+import sys, os, re, math, io, zipfile, shutil
 from datetime import datetime
 import openpyxl
 
@@ -173,8 +173,13 @@ if cells_are_cached(ws, _RECALC_CHECKS):
 else:
     print("  Workbook formulas not cached — recalculating...")
     RECALCED_PATH = recalculate_workbook(XLSX_PATH)
+    wb.close()  # release the stale-cache copy before loading the recalculated one
     wb = openpyxl.load_workbook(RECALCED_PATH, data_only=True)
     ws = _find_sc_sheet(wb)
+    # The recalculated file has now been fully parsed into `wb` above, so its
+    # on-disk temp copy (and the tempdir recalculate_workbook() created for
+    # it) is no longer needed.
+    shutil.rmtree(os.path.dirname(RECALCED_PATH), ignore_errors=True)
     # Fail loudly if recalculation still didn't populate these cells — never
     # silently fall back to computing them ourselves.
     verify_recalculated(ws, _RECALC_CHECKS)
@@ -711,8 +716,7 @@ safe_plant    = re.sub(r'[^\w\- ]', '', PLANT).strip().replace(' ', '_')
 out_name      = f"{safe_customer}_{safe_plant}_EA_Report_Executive.docx"
 out_path      = os.path.join(os.path.dirname(os.path.abspath(XLSX_PATH)), out_name)
 
-buf = io.BytesIO()
-with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zout:
+with zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED) as zout:
     for name in names:
         if name == 'word/document.xml':
             zout.writestr(name, doc_xml.encode('utf-8'))
@@ -722,9 +726,7 @@ with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zout:
             zout.writestr(name, zin.read(name))
 
 zin.close()
-
-with open(out_path, 'wb') as f:
-    f.write(buf.getvalue())
+wb.close()
 
 print(f"\nDone: {out_name}")
 print(f"Saved to: {out_path}")
