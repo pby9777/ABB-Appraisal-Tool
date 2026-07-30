@@ -520,6 +520,101 @@ footer_xmls  = [zin.read(n).decode('utf-8') for n in footer_names]
 # by literal value, after Phase 2 - see that block for why the ordering is
 # reversed.
 
+# ── Charts: update cached data points so Word renders real figures ──────────
+# Chart XML caches its data as <c:numRef><c:f>...</c:f><c:numCache>...points...
+# </c:numCache></c:numRef>. Word displays the cache, not a live link, so we
+# overwrite the cached <c:v> values in place — this is robust to whatever
+# sheet/cell the template's embedded workbook happens to reference. This
+# block was previously missing entirely from this script (unlike
+# generate_report_standard.py), which is why none of the Executive report's
+# summary-page charts ever reflected the actual customer data.
+#
+# Business rule: the Payback Sensitivity chart and the energy-consumption
+# "Now vs Upgraded Fleet" chart must always show the same All-Assets figures
+# as the Complete report, never a Top-10-only subset. CONSUMP_BEFORE/
+# SAVINGS_KWH/SENSITIVITY above are already read from the same NPV+/
+# all-assets workbook cells generate_report_standard.py uses (rows 16/17 and
+# 19-23, column C) — reusing them here keeps the two reports' charts
+# identical with no extra Top-10-specific logic required. The NPV-positive
+# pie chart is fleet-wide metadata (same NPV_POS_CNT/TOTAL_ASSETS shown on
+# both reports' cover pages via the "21/45 motors NPV positive" fraction),
+# not a Top-10-scoped figure, so it uses the same values here too.
+
+def _set_single_point_values(ctxt, values):
+    """Overwrite the single <c:pt idx="0"> value of the first len(values)
+    <c:numRef> blocks found, in document order."""
+    refs = list(re.finditer(r'<c:numRef>.*?</c:numRef>', ctxt, re.DOTALL))
+    out, prev = [], 0
+    for ref, val in zip(refs, values):
+        out.append(ctxt[prev:ref.start()])
+        seg = re.sub(r'(<c:pt idx="0"><c:v>)[^<]*(</c:v>)',
+                     lambda m: f'{m.group(1)}{val:.10f}{m.group(2)}',
+                     ref.group(), count=1)
+        out.append(seg)
+        prev = ref.end()
+    out.append(ctxt[prev:])
+    return ''.join(out)
+
+
+def _set_last_multi_point_values(ctxt, values):
+    """Overwrite every <c:pt> value inside the LAST <c:numRef> block found —
+    that block holds the plotted series regardless of how many numRefs
+    (categories + series, or just series) the template's chart declares."""
+    refs = list(re.finditer(r'<c:numRef>.*?</c:numRef>', ctxt, re.DOTALL))
+    if not refs:
+        return ctxt
+    ref = refs[-1]
+    seg = ref.group()
+    pts = list(re.finditer(r'<c:pt idx="(\d+)"><c:v>[^<]*</c:v></c:pt>', seg))
+    new_seg = seg
+    for pt, val in list(zip(pts, values))[::-1]:
+        idx = pt.group(1)
+        new_seg = new_seg[:pt.start()] + f'<c:pt idx="{idx}"><c:v>{val}</c:v></c:pt>' + new_seg[pt.end():]
+    return ctxt[:ref.start()] + new_seg + ctxt[ref.end():]
+
+
+# Binary/zip parts rewritten below, applied at write time alongside
+# doc_xml/footer_xmls (see the write loop at the bottom of this script).
+binary_overrides = {}
+
+# Chart 1: Energy Consumption bar (before / after, All-Assets — "Now vs
+# Upgraded Fleet") — 2 single-point series
+cons_before = float(CONSUMP_BEFORE or 0)
+cons_after  = cons_before - float(SAVINGS_KWH or 0)
+if 'word/charts/chart1.xml' in names:
+    ctxt = zin.read('word/charts/chart1.xml').decode('utf-8')
+    ctxt = _set_single_point_values(ctxt, [cons_before, cons_after])
+    binary_overrides['word/charts/chart1.xml'] = ctxt.encode('utf-8')
+    print(f"  Chart 1 (Energy Consumption): {fmt(cons_before)} kWh -> {fmt(cons_after)} kWh")
+
+# Chart 2: NPV positive pie chart (fleet-wide, All-Assets) — update embedded
+# Excel workbook + cache
+if 'word/embeddings/Microsoft_Excel_Worksheet.xlsx' in names:
+    emb_bytes = zin.read('word/embeddings/Microsoft_Excel_Worksheet.xlsx')
+    ewb = openpyxl.load_workbook(io.BytesIO(emb_bytes))
+    ews = ewb.active
+    ews['B2'] = NPV_POS_CNT
+    ews['B3'] = TOTAL_ASSETS - NPV_POS_CNT
+    ews['A2'] = 'NPV Positive'
+    ews['A3'] = 'Remaining Assets'
+    buf2 = io.BytesIO()
+    ewb.save(buf2)
+    ewb.close()
+    binary_overrides['word/embeddings/Microsoft_Excel_Worksheet.xlsx'] = buf2.getvalue()
+    if 'word/charts/chart2.xml' in names:
+        c2txt = zin.read('word/charts/chart2.xml').decode('utf-8')
+        c2txt = _set_last_multi_point_values(c2txt, [NPV_POS_CNT, TOTAL_ASSETS - NPV_POS_CNT])
+        c2txt = c2txt.replace('<c:v>2nd Qtr</c:v>', '<c:v>Remaining Assets</c:v>')
+        binary_overrides['word/charts/chart2.xml'] = c2txt.encode('utf-8')
+    print(f"  Chart 2 (NPV pie): {NPV_POS_CNT} NPV+ / {TOTAL_ASSETS - NPV_POS_CNT} remaining")
+
+# Chart 3: Payback sensitivity (All-Assets) — overwrite the plotted payback series
+if 'word/charts/chart3.xml' in names and SENSITIVITY:
+    ctxt = zin.read('word/charts/chart3.xml').decode('utf-8')
+    ctxt = _set_last_multi_point_values(ctxt, [s[1] for s in SENSITIVITY])
+    binary_overrides['word/charts/chart3.xml'] = ctxt.encode('utf-8')
+    print(f"  Chart 3 (Payback sensitivity): {[round(s[1], 2) for s in SENSITIVITY]}")
+
 # ── Phase 2: Dynamic Table Rendering ─────────────────────────────────────────
 # Field-map keys are normalize_header(template header text) — see report_table_utils.
 # '#' / 'application' / etc. below match the templates' actual header row, not
@@ -645,6 +740,20 @@ _kpi_replacements = [
 
 doc_xml = replace_literal_paragraphs(doc_xml, _cover_replacements + _kpi_replacements)
 
+# Energy Savings tables' own currency-denominated column headers are baked
+# into the template as literal "(EUR)" text, never covered by the field-map
+# based table renderer above (which only matches header text to a column
+# index via normalize_header(), stripping the currency code rather than
+# rewriting it). This template repeats the header row twice (Top-10 table +
+# All-Assets appendix table), so both need it and 2 matches is expected —
+# warn_ambiguous is off for that reason, not because the count is uncertain.
+_currency_header_replacements = [
+    ('Energy Cost (EUR)',         f"Energy Cost ({CURRENCY})"),
+    ('Energy Cost Savings (EUR)', f"Energy Cost Savings ({CURRENCY})"),
+    ('Investment (EUR)',          f"Investment ({CURRENCY})"),
+]
+doc_xml = replace_literal_paragraphs(doc_xml, _currency_header_replacements, warn_ambiguous=False)
+
 # Payback / IRR are overlaid as a text box on top of a donut-shaped image
 # (not a table cell, not a native chart). Scoped to text-box content only -
 # a bare "42%" is otherwise too generic to match document-wide once Phase 2
@@ -718,6 +827,8 @@ with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zout:
             zout.writestr(name, doc_xml.encode('utf-8'))
         elif name in footer_names:
             zout.writestr(name, footer_xmls[footer_names.index(name)].encode('utf-8'))
+        elif name in binary_overrides:
+            zout.writestr(name, binary_overrides[name])
         else:
             zout.writestr(name, zin.read(name))
 

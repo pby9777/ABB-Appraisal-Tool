@@ -641,6 +641,19 @@ _kpi_replacements = [
 
 doc_xml = replace_literal_paragraphs(doc_xml, _cover_replacements + _kpi_replacements)
 
+# Energy Savings table's own currency-denominated column headers are baked
+# into the template as literal "(EUR)" text, never covered by the field-map
+# based table renderer above (which only matches header text to a column
+# index via normalize_header(), stripping the currency code rather than
+# rewriting it). Fix them here so a non-EUR workbook currency shows up in
+# the header row too, not just the KPI tiles/cover page.
+_currency_header_replacements = [
+    ('Energy Cost (EUR)',         f"Energy Cost ({CURRENCY})"),
+    ('Energy Cost Savings (EUR)', f"Energy Cost Savings ({CURRENCY})"),
+    ('Investment (EUR)',          f"Investment ({CURRENCY})"),
+]
+doc_xml = replace_literal_paragraphs(doc_xml, _currency_header_replacements, warn_ambiguous=False)
+
 # Payback / IRR are overlaid as a text box on top of a donut-shaped image
 # (not a table cell, not a native chart). Scoped to text-box content only -
 # a bare "28%" is otherwise too generic to match document-wide once Phase 2
