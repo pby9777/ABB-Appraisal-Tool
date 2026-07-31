@@ -411,6 +411,73 @@ header {
   accent-color: var(--red); width: 15px; height: 15px; flex-shrink: 0;
 }
 
+/* ── Optional report columns (Issue 3) ─────────────────────── */
+.col-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 16px;
+  margin-top: 6px;
+}
+.col-check-item {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--black); cursor: pointer; user-select: none;
+}
+.col-check-item input[type=checkbox] {
+  accent-color: var(--red); width: 15px; height: 15px; flex-shrink: 0;
+}
+
+/* ── Custom Appendix editor (Issue 2) ──────────────────────── */
+.appendix-editor {
+  border: 1.5px solid var(--grey-150);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-top: 6px;
+}
+.appendix-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  padding: 6px 8px;
+  background: var(--grey-50);
+  border-bottom: 1.5px solid var(--grey-150);
+}
+.appendix-toolbar button {
+  height: 28px; min-width: 28px; padding: 0 8px;
+  border: 1px solid var(--grey-150); border-radius: var(--radius);
+  background: var(--white); color: var(--black);
+  font-family: var(--font); font-size: 12px; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.appendix-toolbar button:hover { border-color: var(--red); background: var(--red-dim); }
+.appendix-toolbar select {
+  height: 28px; border: 1px solid var(--grey-150); border-radius: var(--radius);
+  font-family: var(--font); font-size: 12px; color: var(--black); background: var(--white);
+  padding: 0 6px;
+}
+.apx-sep { width: 1px; height: 20px; background: var(--grey-150); margin: 0 4px; }
+.appendix-canvas {
+  min-height: 160px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 12px 14px;
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--black);
+  background: var(--white);
+  outline: none;
+  line-height: 1.5;
+}
+.appendix-canvas:empty::before {
+  content: attr(data-placeholder);
+  color: var(--grey-300);
+}
+.appendix-canvas img { max-width: 100%; height: auto; }
+.appendix-canvas table { border-collapse: collapse; margin: 8px 0; }
+.appendix-canvas table td { border: 1px solid var(--grey-300); padding: 4px 8px; min-width: 40px; }
+.appendix-canvas p[data-caption="1"] { font-style: italic; font-size: 12px; color: var(--grey-600); text-align: center; }
+.appendix-canvas h1 { font-family: var(--cond); font-size: 22px; font-weight: 700; margin: 4px 0; }
+.appendix-canvas h2 { font-family: var(--cond); font-size: 18px; font-weight: 700; margin: 4px 0; }
+.appendix-canvas h3 { font-family: var(--cond); font-size: 15px; font-weight: 700; margin: 4px 0; }
+.appendix-canvas ul, .appendix-canvas ol { padding-left: 24px; margin: 4px 0; }
+
 @media (max-width: 560px) {
   .rpt-grid { grid-template-columns: 1fr; }
 }
@@ -921,6 +988,79 @@ footer b { color: var(--red); }
             Unchecked generates the Complete Report (All Assets); checked generates the
             Executive Report (Top-10). Available for the Standard template only.
           </div>
+
+          <!-- Optional columns (Issue 3) -->
+          <div class="field" style="margin-top:18px">
+            <span class="field-label">Report Columns
+              <span class="unit">uncheck to omit from the Application Details table</span>
+            </span>
+            <div class="col-toggle-grid">
+              <label class="col-check-item">
+                <input type="checkbox" id="chk-col-ie" checked/> <span>IE</span>
+              </label>
+              <label class="col-check-item">
+                <input type="checkbox" id="chk-col-eff" checked/> <span>Eff.</span>
+              </label>
+              <label class="col-check-item">
+                <input type="checkbox" id="chk-col-avg_loading" checked/> <span>Avg. Loading (%)</span>
+              </label>
+              <label class="col-check-item">
+                <input type="checkbox" id="chk-col-avg_flow" checked/> <span>Avg. Flow (%)</span>
+              </label>
+              <label class="col-check-item">
+                <input type="checkbox" id="chk-col-avg_freq" checked/> <span>Avg. Frequency (Hz)</span>
+              </label>
+            </div>
+          </div>
+          <input type="hidden" name="exclude_cols" id="inp-exclude-cols" value=""/>
+
+          <!-- Custom Appendix content (Issue 2) -->
+          <div class="field" style="margin-top:18px">
+            <span class="field-label">Custom Appendix Content
+              <span class="unit">optional</span>
+            </span>
+            <div class="field" style="margin-bottom:8px; max-width:320px">
+              <span class="field-label" style="font-size:10px">Insert content</span>
+              <select name="appendix_position">
+                <option value="appendix_start">At the beginning of the Appendix</option>
+                <option value="appendix_end">At the end of the Appendix</option>
+                <option value="before_details">Before Application Details</option>
+                <option value="after_details">After Application Details</option>
+              </select>
+            </div>
+            <div class="appendix-editor">
+              <div class="appendix-toolbar">
+                <select onchange="apxFormatBlock(this.value); this.selectedIndex=0;">
+                  <option value="" selected disabled>Format…</option>
+                  <option value="p">Paragraph</option>
+                  <option value="h1">Heading 1</option>
+                  <option value="h2">Heading 2</option>
+                  <option value="h3">Heading 3</option>
+                </select>
+                <button type="button" title="Bold" onclick="apxExec('bold')"><b>B</b></button>
+                <button type="button" title="Italic" onclick="apxExec('italic')"><i>I</i></button>
+                <button type="button" title="Underline" onclick="apxExec('underline')"><u>U</u></button>
+                <button type="button" title="Superscript" onclick="apxExec('superscript')">x²</button>
+                <button type="button" title="Subscript" onclick="apxExec('subscript')">x₂</button>
+                <span class="apx-sep"></span>
+                <button type="button" title="Bullet list" onclick="apxExec('insertUnorderedList')">• List</button>
+                <button type="button" title="Numbered list" onclick="apxExec('insertOrderedList')">1. List</button>
+                <span class="apx-sep"></span>
+                <button type="button" title="Align left" onclick="apxExec('justifyLeft')">◀</button>
+                <button type="button" title="Align center" onclick="apxExec('justifyCenter')">▬</button>
+                <button type="button" title="Align right" onclick="apxExec('justifyRight')">▶</button>
+                <span class="apx-sep"></span>
+                <button type="button" title="Insert table" onclick="apxInsertTable()">⊞ Table</button>
+                <button type="button" title="Insert image" onclick="document.getElementById('apx-img-input').click()">🖼 Image</button>
+                <button type="button" title="Insert caption" onclick="apxInsertCaption()">Caption</button>
+                <input type="file" id="apx-img-input" accept="image/*" style="display:none" onchange="apxInsertImage(this)"/>
+              </div>
+              <div id="apx-editor" class="appendix-canvas" contenteditable="true"
+                   data-placeholder="Start typing your custom Appendix content here…"
+                   oninput="apxSync()"></div>
+            </div>
+          </div>
+          <textarea name="appendix_html" id="apx-hidden" style="display:none"></textarea>
         </div>
 
       </div>
@@ -1158,6 +1298,7 @@ footer b { color: var(--red); }
         showError('Customer Name and Plant / Site are required to generate the Word report (Step 4).');
         return;
       }
+      syncReportColumnAndAppendixFields();
     }
 
     const formData = new FormData(document.getElementById('mainForm'));
@@ -1198,6 +1339,140 @@ footer b { color: var(--red); }
     } finally {
       setLoading(false);
     }
+  }
+
+  // ── Report columns + Appendix editor (Issues 2 & 3) ────
+  function syncReportColumnAndAppendixFields() {
+    const colKeys = ['ie', 'eff', 'avg_loading', 'avg_flow', 'avg_freq'];
+    const excluded = colKeys.filter(k => !document.getElementById('chk-col-' + k).checked);
+    document.getElementById('inp-exclude-cols').value = excluded.join(',');
+    apxSync();
+  }
+
+  function apxSync() {
+    document.getElementById('apx-hidden').value = document.getElementById('apx-editor').innerHTML;
+  }
+
+  function apxExec(cmd, val) {
+    document.getElementById('apx-editor').focus();
+    document.execCommand(cmd, false, val || null);
+    apxSync();
+  }
+
+  // Deliberately NOT using document.execCommand('formatBlock', ...): its
+  // required argument format ('<h1>' vs bare 'H1') and exact behavior vary
+  // enough across browsers that headings could silently fail to apply or
+  // all collapse to the same block type. This walks the DOM directly instead
+  // so H1/H2/H3/Paragraph always produce the exact tag requested.
+  function apxFormatBlock(tag) {
+    if (!tag) return;
+    const editor = document.getElementById('apx-editor');
+    editor.focus();
+    const sel = window.getSelection();
+    if (!sel.rangeCount) { apxSync(); return; }
+    const range = sel.getRangeAt(0);
+
+    const topLevelBlockOf = (node) => {
+      if (!node) return null;
+      if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+      while (node && node !== editor && node.parentNode !== editor) {
+        node = node.parentNode;
+      }
+      return (node && node !== editor) ? node : null;
+    };
+
+    const startBlock = topLevelBlockOf(range.startContainer);
+    const endBlock = topLevelBlockOf(range.endContainer);
+
+    if (!startBlock && !endBlock) {
+      // No block-level wrapper yet (e.g. the very first keystrokes in an
+      // empty editor) — wrap whatever's there in one new block.
+      const el = document.createElement(tag);
+      el.innerHTML = editor.innerHTML || '<br>';
+      editor.innerHTML = '';
+      editor.appendChild(el);
+      apxSync();
+      return;
+    }
+
+    // Convert every top-level block from startBlock to endBlock (inclusive) —
+    // covers both a single-line and a multi-paragraph selection.
+    const blocks = [];
+    let node = startBlock || endBlock;
+    const last = endBlock || startBlock;
+    while (node) {
+      blocks.push(node);
+      if (node === last) break;
+      node = node.nextElementSibling;
+    }
+
+    let lastNew = null;
+    for (const block of blocks) {
+      const el = document.createElement(tag);
+      el.innerHTML = block.innerHTML;
+      block.replaceWith(el);
+      lastNew = el;
+    }
+
+    if (lastNew) {
+      const r = document.createRange();
+      r.selectNodeContents(lastNew);
+      r.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(r);
+    }
+
+    apxSync();
+  }
+
+  function apxInsertTable() {
+    const rowsStr = prompt('Number of rows?', '2');
+    if (rowsStr === null) return;
+    const colsStr = prompt('Number of columns?', '2');
+    if (colsStr === null) return;
+    const rows = Math.max(1, parseInt(rowsStr, 10) || 0);
+    const cols = Math.max(1, parseInt(colsStr, 10) || 0);
+    let html = '<table>';
+    for (let r = 0; r < rows; r++) {
+      html += '<tr>';
+      for (let c = 0; c < cols; c++) html += '<td>&nbsp;</td>';
+      html += '</tr>';
+    }
+    html += '</table><p><br></p>';
+    document.getElementById('apx-editor').focus();
+    document.execCommand('insertHTML', false, html);
+    apxSync();
+  }
+
+  function apxInsertCaption() {
+    document.getElementById('apx-editor').focus();
+    document.execCommand('insertHTML', false, '<p data-caption="1">Caption text</p><p><br></p>');
+    apxSync();
+  }
+
+  function apxInsertImage(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        // Always re-encode as PNG regardless of the source format, so the
+        // backend never has to special-case jpg/gif decoding.
+        const pngDataUrl = canvas.toDataURL('image/png');
+        const html = `<img src="${pngDataUrl}" width="${img.naturalWidth}" height="${img.naturalHeight}"/>`;
+        document.getElementById('apx-editor').focus();
+        document.execCommand('insertHTML', false, html);
+        apxSync();
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+    input.value = '';
   }
 
   // ── Helpers ───────────────────────────────────────────

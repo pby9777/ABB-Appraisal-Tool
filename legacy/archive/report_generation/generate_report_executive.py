@@ -15,10 +15,24 @@ import sys, os, re, math, io, zipfile
 from datetime import datetime
 import openpyxl
 
+from report_table_utils import extract_cli_flag, OPTIONAL_DETAIL_COLUMNS
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 args = sys.argv[1:]
+
+# Optional named flags (Issues 2 & 3 — custom Appendix content, user-selectable
+# columns), stripped out before the positional args below are parsed.
+APPENDIX_HTML_PATH = extract_cli_flag(args, '--appendix-html')
+APPENDIX_POSITION  = extract_cli_flag(args, '--appendix-position') or 'appendix_start'
+_exclude_raw = extract_cli_flag(args, '--exclude-cols')
+EXCLUDE_COLS = {c.strip() for c in (_exclude_raw or '').split(',') if c.strip()}
+REMOVE_DETAIL_COLS = [OPTIONAL_DETAIL_COLUMNS[c] for c in EXCLUDE_COLS
+                       if c in OPTIONAL_DETAIL_COLUMNS]
+
 if len(args) < 3:
-    print('Usage: python generate_report_executive.py  <excel.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]')
+    print('Usage: python generate_report_executive.py  <excel.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]'
+          '  [--exclude-cols ie,eff,avg_loading,avg_flow,avg_freq]  [--appendix-html FILE]'
+          '  [--appendix-position appendix_start|appendix_end|before_details|after_details]')
     sys.exit(1)
 
 XLSX_PATH   = args[0]
@@ -141,10 +155,21 @@ COL_CONN     = find_col(['dol vsd', 'connection'], 44)
 COL_OUTPUT   = find_col(['output (kw)', 'rated power, kw'], 45)
 COL_SHAFT    = find_col(['shaft height (frame)', 'shaft height'], 46)
 COL_RUNHRS   = find_col(['running hours', 'running time (hours)'], 47)
-COL_AVG      = find_col(['average flow % / average frequency (hz)',
-                          'average flow', 'average frequency', 'avg. frequency'], 48)
+# Three distinct measurements, each its own column in the workbook — never
+# one shared field. Previously a single COL_AVG (defaulting to 48, "Average
+# Flow (%)") was reused for both the Avg. Loading and Avg. Frequency report
+# columns, which is why Avg. Flow data appeared under Avg. Loading (%) and
+# why Avg. Frequency showed whatever that same misrouted column held.
+COL_AVG_LOAD = find_col(['average loading (%)', 'avg. loading (%)', 'avg loading (%)'], 47)
+COL_AVG_FLOW = find_col(['average flow (%)', 'avg. flow (%)', 'avg flow (%)'], 48)
+COL_AVG_FREQ = find_col(['average freqency (hz)', 'average frequency (hz)',
+                          'avg. frequency (hz)', 'avg frequency (hz)'], 49)
 COL_ESS      = find_col(['recommended ess motor'], 50)
 COL_ESSC     = find_col(['ess connection'], 51)
+# "Eff." (Motor Efficiency %) — used by HP/NEMA-sourced assets in place of an
+# IE class. Was never read at all, so the report's "Eff." column always fell
+# back to whatever sample placeholder text the template's own donor row held.
+COL_EFF      = find_col(['motor efficiency [%]', 'motor efficiency', 'eff.'], 52)
 
 # ── Recalculate only if the workbook's cached formula values are stale ───────
 # Header labels (just read via col_map above) are literal text and identical
@@ -223,6 +248,21 @@ for r in range(19, 24):
 # genuinely blank/invalid, which the loop below already does. This list also
 # feeds the All-Assets appendix tables further down, so under-scanning here
 # would silently truncate that appendix too, not just the Complete report.
+def _fmt_avg(raw):
+    """Format an Avg. Loading/Flow (%) or Avg. Frequency (Hz) cell: a
+    0-1 fraction is shown as a whole percent, anything else (including
+    plain Hz numbers, which are never in that range) passes through
+    as-is. Blank/'-' cells (cv() already returns None for those) yield
+    "" — never synthesized from another field."""
+    if raw is None:
+        return "-"
+    try:
+        v = float(raw)
+        return f"{round(v*100)}" if 0 < v <= 1 else str(raw).replace(' ', '')
+    except (TypeError, ValueError):
+        return str(raw).replace(' ', '')
+
+
 ASSET_START_ROW  = 37
 ASSET_ROW_CEILING = 1100  # matches the sheet's own B37:B1100 formula range
 assets = []
@@ -241,16 +281,10 @@ for r in range(ASSET_START_ROW, ASSET_START_ROW + ASSET_ROW_CEILING):
     except:
         shaft_val = str(shaft_raw) if shaft_raw else ""
 
-    avg_raw = cv(r, COL_AVG)
-    if avg_raw is not None:
-        try:
-            v = float(avg_raw)
-            avg_val = f"{round(v*100)}" if 0 < v <= 1 else str(avg_raw).replace(' ', '')
-        except:
-            avg_val = str(avg_raw).replace(' ', '')
-    else:
-        fm = re.search(r'([\d.]+)\s*Hz', ess_motor)
-        avg_val = fm.group(1) if fm else ""
+    avg_loading_val = _fmt_avg(cv(r, COL_AVG_LOAD))
+    avg_flow_val    = _fmt_avg(cv(r, COL_AVG_FLOW))
+    avg_freq_val    = _fmt_avg(cv(r, COL_AVG_FREQ))
+    eff_val         = str(cv(r, COL_EFF)) if cv(r, COL_EFF) is not None else ""
 
     conn_raw = cv(r, COL_CONN)
     conn_val = str(conn_raw) if conn_raw else "DOL"
@@ -275,7 +309,10 @@ for r in range(ASSET_START_ROW, ASSET_START_ROW + ASSET_ROW_CEILING):
         "output_kw": str(cv(r, COL_OUTPUT) or ""),
         "shaft_h":   shaft_val,
         "run_hrs":   str(cv(r, COL_RUNHRS) or ""),
-        "avg_val":   avg_val,
+        "avg_loading": avg_loading_val,
+        "avg_flow":  avg_flow_val,
+        "avg_freq":  avg_freq_val,
+        "eff":       eff_val,
         "ess_motor": ess_motor,
         "ess_conn":  str(cv(r, COL_ESSC) or ""),
     })
@@ -641,15 +678,20 @@ _DETAILS_FIELD_MAP = {
     '#':                     lambda a: str(a['num']),
     'application':           lambda a: a['tag'],
     'ie':                    lambda a: a['ie'],
+    'eff.':                  lambda a: a['eff'] if a['eff'] else '-',
     'driven load':           lambda a: a['load'],
     'flow control method':   lambda a: a['flow_ctrl'],
     'connection':            lambda a: a['connection'],
     'output (kw)':           lambda a: str(a['output_kw']),
     'running time (hours)':  lambda a: str(a['run_hrs']),
-    # Loading% only applies to DOL connections, frequency only to VSD — the
-    # single avg_val field covers both depending on which was measured.
-    'avg. loading (%)':      lambda a: a['avg_val'] if a['connection'] == 'DOL' else '-',
-    'avg. frequency (hz)':   lambda a: a['avg_val'] if a['connection'] != 'DOL' else '-',
+    # Each is its own workbook column (COL_AVG_LOAD/COL_AVG_FLOW/COL_AVG_FREQ),
+    # never a shared field — and always shown as-is, whatever the workbook
+    # holds for this asset, regardless of DOL/VSD connection type. Blank
+    # cells already come back as "-" from _fmt_avg(); no separate suppression
+    # by connection type is applied here.
+    'avg. loading (%)':      lambda a: a['avg_loading'],
+    'avg. flow (%)':         lambda a: a['avg_flow'],
+    'avg. frequency (hz)':   lambda a: a['avg_freq'],
     'recommended ess motor': lambda a: a['ess_motor'],
     'ess connection':        lambda a: a['ess_conn'],
 }
@@ -681,7 +723,7 @@ doc_xml = render_table_section(
     doc_xml, 'Application Details (Top 10)',
     anchor='Application Details – Top 10',
     asset_list=top10, field_map=_DETAILS_FIELD_MAP, required=_DETAILS_REQUIRED,
-    n_totals=0,
+    n_totals=0, remove_cols=REMOVE_DETAIL_COLS,
 )
 
 # Unlike the older tokenized top-10 template this engine was originally built
@@ -704,7 +746,7 @@ doc_xml = render_table_section(
     doc_xml, 'Application Details (All Assets, appendix)',
     anchor='Details of Recommendation – All Assets',
     asset_list=assets_sorted, field_map=_DETAILS_FIELD_MAP, required=_DETAILS_REQUIRED,
-    n_totals=0,
+    n_totals=0, remove_cols=REMOVE_DETAIL_COLS,
 )
 
 print("  Phase 2 complete.")
@@ -813,6 +855,29 @@ doc_xml = replace_within_row(doc_xml, 'Total NPV Positive Assets (21)', [
 footer_xmls = [re.sub(r'\d{4}-\d{2}-\d{2}', RPT_DATE_ISO, fx) for fx in footer_xmls]
 
 print("  Scalar substitution complete.")
+
+# ── Custom Appendix content (Issue 2) ────────────────────────────────────────
+# Spliced in last, after every other doc_xml substitution above, so nothing
+# in the user's own rich-text content can ever coincidentally match one of
+# those literal find/replace targets (e.g. a KPI figure typed verbatim).
+if APPENDIX_HTML_PATH:
+    from appendix_html import splice_appendix, ensure_image_content_types
+    _rels_name = 'word/_rels/document.xml.rels'
+    _ct_name = '[Content_Types].xml'
+    _rels_xml = zin.read(_rels_name).decode('utf-8')
+    _existing_media = [n for n in names if n.startswith('word/media/')]
+    doc_xml, _rels_xml, _appendix_media = splice_appendix(
+        doc_xml, _rels_xml, APPENDIX_HTML_PATH, _existing_media,
+        position=APPENDIX_POSITION, details_anchor='Application Details – Top 10',
+    )
+    if _appendix_media:
+        binary_overrides[_rels_name] = _rels_xml.encode('utf-8')
+        binary_overrides[_ct_name] = ensure_image_content_types(
+            zin.read(_ct_name).decode('utf-8')
+        ).encode('utf-8')
+        for _media_name, _data in _appendix_media.items():
+            binary_overrides[_media_name] = _data
+            names.append(_media_name)  # new zip entry, not in the original template
 
 # ── Write output docx ─────────────────────────────────────────────────────────
 safe_customer = re.sub(r'[^\w\- ]', '', CUSTOMER).strip().replace(' ', '_')

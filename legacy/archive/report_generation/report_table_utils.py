@@ -20,6 +20,19 @@ import openpyxl
 from excel_formula_engine import FormulaEngine, FormulaError
 
 
+def extract_cli_flag(args, flag):
+    """Pop a `flag value` pair out of a sys.argv-style list in place and
+    return the value (None if the flag isn't present). Lets the report
+    scripts accept optional named options (--exclude-cols, --appendix-html)
+    alongside their existing positional args without pulling in argparse."""
+    if flag in args:
+        i = args.index(flag)
+        val = args[i + 1] if i + 1 < len(args) else None
+        del args[i:i + 2]
+        return val
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Workbook recalculation
 # ---------------------------------------------------------------------------
@@ -300,6 +313,84 @@ def validate_headers(header_map, required, tname):
         sys.exit(1)
 
 
+# Normalized (normalize_header()) column keys for the Application Details
+# table's user-toggleable columns (Issue 3). Shared by both report scripts so
+# the UI's column keys and the table's own header text stay in one place.
+OPTIONAL_DETAIL_COLUMNS = {
+    "ie":          "ie",
+    "eff":         "eff.",
+    "avg_loading": "avg. loading (%)",
+    "avg_flow":    "avg. flow (%)",
+    "avg_freq":    "avg. frequency (hz)",
+}
+
+
+def remove_table_columns(tbl_xml, header_map, remove_keys):
+    """Physically remove whole columns — header cell, every data-row cell,
+    and the matching <w:gridCol> — from a table with no merged cells
+    (gridSpan/vMerge); the Energy Savings / Application Details table family
+    never has any. Each removed column's width is redistributed
+    proportionally across the remaining columns so the table still fills the
+    same overall width, instead of leaving a professional-looking report with
+    dead whitespace where a column used to be.
+
+    header_map: normalize_header(header text) -> column index, from
+    build_header_map() against this table's own header row.
+    remove_keys: iterable of normalized header keys (see
+    OPTIONAL_DETAIL_COLUMNS) to drop. Keys not present in header_map are
+    silently ignored — different templates carry different optional columns.
+
+    Returns tbl_xml unchanged if no key in remove_keys is present.
+    """
+    idxs = sorted({header_map[k] for k in remove_keys if k in header_map})
+    if not idxs:
+        return tbl_xml
+
+    grid_m = re.search(r'<w:tblGrid>(.*?)</w:tblGrid>', tbl_xml, re.DOTALL)
+    if not grid_m:
+        return tbl_xml
+    widths = [int(w) for w in re.findall(r'<w:gridCol w:w="(\d+)"/>', grid_m.group(1))]
+
+    idx_set = set(idxs)
+    keep_idxs = [i for i in range(len(widths)) if i not in idx_set]
+    removed_total = sum(widths[i] for i in idxs)
+    kept_total = sum(widths[i] for i in keep_idxs) or 1
+    new_widths = {
+        i: widths[i] + round(removed_total * (widths[i] / kept_total))
+        for i in keep_idxs
+    }
+
+    new_grid = '<w:tblGrid>' + ''.join(
+        f'<w:gridCol w:w="{new_widths[i]}"/>' for i in keep_idxs
+    ) + '</w:tblGrid>'
+    tbl_xml = tbl_xml[:grid_m.start()] + new_grid + tbl_xml[grid_m.end():]
+
+    out, pos = [], 0
+    for rs, re_ in _get_rows(tbl_xml):
+        out.append(tbl_xml[pos:rs])
+        row_xml = tbl_xml[rs:re_]
+        cell_spans = [(m.start(), m.end())
+                      for m in re.finditer(r'<w:tc[ >].*?</w:tc>', row_xml, re.DOTALL)]
+        row_out, prev = [], 0
+        for i, (cs, ce) in enumerate(cell_spans):
+            row_out.append(row_xml[prev:cs])
+            if i in idx_set:
+                prev = ce
+                continue
+            cell = row_xml[cs:ce]
+            if i in new_widths:
+                cell = re.sub(r'(<w:tcW w:w=")\d+(")',
+                               lambda m, w=new_widths[i]: f'{m.group(1)}{w}{m.group(2)}',
+                               cell, count=1)
+            row_out.append(cell)
+            prev = ce
+        row_out.append(row_xml[prev:])
+        out.append(''.join(row_out))
+        pos = re_
+    out.append(tbl_xml[pos:])
+    return ''.join(out)
+
+
 def rebuild_table(tbl_xml, asset_list, header_map, field_map, n_totals):
     """Remove ROW_TEMPLATE + sample rows, clone ROW_TEMPLATE once per asset.
     n_totals: number of trailing rows to preserve as totals (already scalar-filled).
@@ -483,13 +574,21 @@ def trim_stale_appendix(doc_xml, before_anchor='Data is listed as total annual')
     return doc_xml[:appendix_end] + doc_xml[calcmeth_start:]
 
 
-def render_table_section(doc_xml, name, anchor, asset_list, field_map, required, n_totals=0):
+def render_table_section(doc_xml, name, anchor, asset_list, field_map, required,
+                          n_totals=0, remove_cols=None):
     """Single reusable renderer for a ranked-asset table.
 
     Locates the Energy Savings / Application Details section by heading text,
     takes the first table after that heading, validates its header row, and
     replaces its data rows with one row per asset in asset_list (top 10 or
     all — the caller decides by what it passes as asset_list).
+
+    remove_cols: optional iterable of normalized header keys (see
+    OPTIONAL_DETAIL_COLUMNS) to physically drop from this table — header,
+    every data row, and the underlying column width — e.g. the user
+    unchecking "Eff." in the UI (Issue 3). Applied after the table is
+    rebuilt with real asset data, since removal only touches whichever
+    column index the header row says a key lives at, not per-asset content.
 
     Returns the updated doc_xml.
     """
@@ -503,6 +602,8 @@ def render_table_section(doc_xml, name, anchor, asset_list, field_map, required,
     validate_headers(hmap, required, name)
 
     new_tbl = rebuild_table(tbl_xml, asset_list, hmap, field_map, n_totals)
+    if remove_cols:
+        new_tbl = remove_table_columns(new_tbl, hmap, remove_cols)
     doc_xml = doc_xml[:ts] + new_tbl + doc_xml[te:]
     print(f"  {name}: {len(asset_list)} rows, {len(hmap)} columns mapped")
     return doc_xml
