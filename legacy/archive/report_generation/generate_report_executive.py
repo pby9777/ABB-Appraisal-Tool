@@ -15,10 +15,24 @@ import sys, os, re, math, io, zipfile
 from datetime import datetime
 import openpyxl
 
+from report_table_utils import extract_cli_flag, OPTIONAL_DETAIL_COLUMNS
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 args = sys.argv[1:]
+
+# Optional named flags (Issues 2 & 3 — custom Appendix content, user-selectable
+# columns), stripped out before the positional args below are parsed.
+APPENDIX_HTML_PATH = extract_cli_flag(args, '--appendix-html')
+APPENDIX_POSITION  = extract_cli_flag(args, '--appendix-position') or 'appendix_start'
+_exclude_raw = extract_cli_flag(args, '--exclude-cols')
+EXCLUDE_COLS = {c.strip() for c in (_exclude_raw or '').split(',') if c.strip()}
+REMOVE_DETAIL_COLS = [OPTIONAL_DETAIL_COLUMNS[c] for c in EXCLUDE_COLS
+                       if c in OPTIONAL_DETAIL_COLUMNS]
+
 if len(args) < 3:
-    print('Usage: python generate_report_executive.py  <excel.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]')
+    print('Usage: python generate_report_executive.py  <excel.xlsx>  "CUSTOMER"  "Plant"  [Date]  [DataSource]'
+          '  [--exclude-cols ie,eff,avg_loading,avg_flow,avg_freq]  [--appendix-html FILE]'
+          '  [--appendix-position appendix_start|appendix_end|before_details|after_details]')
     sys.exit(1)
 
 XLSX_PATH   = args[0]
@@ -141,10 +155,21 @@ COL_CONN     = find_col(['dol vsd', 'connection'], 44)
 COL_OUTPUT   = find_col(['output (kw)', 'rated power, kw'], 45)
 COL_SHAFT    = find_col(['shaft height (frame)', 'shaft height'], 46)
 COL_RUNHRS   = find_col(['running hours', 'running time (hours)'], 47)
-COL_AVG      = find_col(['average flow % / average frequency (hz)',
-                          'average flow', 'average frequency', 'avg. frequency'], 48)
+# Three distinct measurements, each its own column in the workbook — never
+# one shared field. Previously a single COL_AVG (defaulting to 48, "Average
+# Flow (%)") was reused for both the Avg. Loading and Avg. Frequency report
+# columns, which is why Avg. Flow data appeared under Avg. Loading (%) and
+# why Avg. Frequency showed whatever that same misrouted column held.
+COL_AVG_LOAD = find_col(['average loading (%)', 'avg. loading (%)', 'avg loading (%)'], 47)
+COL_AVG_FLOW = find_col(['average flow (%)', 'avg. flow (%)', 'avg flow (%)'], 48)
+COL_AVG_FREQ = find_col(['average freqency (hz)', 'average frequency (hz)',
+                          'avg. frequency (hz)', 'avg frequency (hz)'], 49)
 COL_ESS      = find_col(['recommended ess motor'], 50)
 COL_ESSC     = find_col(['ess connection'], 51)
+# "Eff." (Motor Efficiency %) — used by HP/NEMA-sourced assets in place of an
+# IE class. Was never read at all, so the report's "Eff." column always fell
+# back to whatever sample placeholder text the template's own donor row held.
+COL_EFF      = find_col(['motor efficiency [%]', 'motor efficiency', 'eff.'], 52)
 
 # ── Recalculate only if the workbook's cached formula values are stale ───────
 # Header labels (just read via col_map above) are literal text and identical
@@ -223,6 +248,21 @@ for r in range(19, 24):
 # genuinely blank/invalid, which the loop below already does. This list also
 # feeds the All-Assets appendix tables further down, so under-scanning here
 # would silently truncate that appendix too, not just the Complete report.
+def _fmt_avg(raw):
+    """Format an Avg. Loading/Flow (%) or Avg. Frequency (Hz) cell: a
+    0-1 fraction is shown as a whole percent, anything else (including
+    plain Hz numbers, which are never in that range) passes through
+    as-is. Blank/'-' cells (cv() already returns None for those) yield
+    "" — never synthesized from another field."""
+    if raw is None:
+        return "-"
+    try:
+        v = float(raw)
+        return f"{round(v*100)}" if 0 < v <= 1 else str(raw).replace(' ', '')
+    except (TypeError, ValueError):
+        return str(raw).replace(' ', '')
+
+
 ASSET_START_ROW  = 37
 ASSET_ROW_CEILING = 1100  # matches the sheet's own B37:B1100 formula range
 assets = []
@@ -241,16 +281,10 @@ for r in range(ASSET_START_ROW, ASSET_START_ROW + ASSET_ROW_CEILING):
     except:
         shaft_val = str(shaft_raw) if shaft_raw else ""
 
-    avg_raw = cv(r, COL_AVG)
-    if avg_raw is not None:
-        try:
-            v = float(avg_raw)
-            avg_val = f"{round(v*100)}" if 0 < v <= 1 else str(avg_raw).replace(' ', '')
-        except:
-            avg_val = str(avg_raw).replace(' ', '')
-    else:
-        fm = re.search(r'([\d.]+)\s*Hz', ess_motor)
-        avg_val = fm.group(1) if fm else ""
+    avg_loading_val = _fmt_avg(cv(r, COL_AVG_LOAD))
+    avg_flow_val    = _fmt_avg(cv(r, COL_AVG_FLOW))
+    avg_freq_val    = _fmt_avg(cv(r, COL_AVG_FREQ))
+    eff_val         = str(cv(r, COL_EFF)) if cv(r, COL_EFF) is not None else ""
 
     conn_raw = cv(r, COL_CONN)
     conn_val = str(conn_raw) if conn_raw else "DOL"
@@ -275,7 +309,10 @@ for r in range(ASSET_START_ROW, ASSET_START_ROW + ASSET_ROW_CEILING):
         "output_kw": str(cv(r, COL_OUTPUT) or ""),
         "shaft_h":   shaft_val,
         "run_hrs":   str(cv(r, COL_RUNHRS) or ""),
-        "avg_val":   avg_val,
+        "avg_loading": avg_loading_val,
+        "avg_flow":  avg_flow_val,
+        "avg_freq":  avg_freq_val,
+        "eff":       eff_val,
         "ess_motor": ess_motor,
         "ess_conn":  str(cv(r, COL_ESSC) or ""),
     })
@@ -520,6 +557,101 @@ footer_xmls  = [zin.read(n).decode('utf-8') for n in footer_names]
 # by literal value, after Phase 2 - see that block for why the ordering is
 # reversed.
 
+# ── Charts: update cached data points so Word renders real figures ──────────
+# Chart XML caches its data as <c:numRef><c:f>...</c:f><c:numCache>...points...
+# </c:numCache></c:numRef>. Word displays the cache, not a live link, so we
+# overwrite the cached <c:v> values in place — this is robust to whatever
+# sheet/cell the template's embedded workbook happens to reference. This
+# block was previously missing entirely from this script (unlike
+# generate_report_standard.py), which is why none of the Executive report's
+# summary-page charts ever reflected the actual customer data.
+#
+# Business rule: the Payback Sensitivity chart and the energy-consumption
+# "Now vs Upgraded Fleet" chart must always show the same All-Assets figures
+# as the Complete report, never a Top-10-only subset. CONSUMP_BEFORE/
+# SAVINGS_KWH/SENSITIVITY above are already read from the same NPV+/
+# all-assets workbook cells generate_report_standard.py uses (rows 16/17 and
+# 19-23, column C) — reusing them here keeps the two reports' charts
+# identical with no extra Top-10-specific logic required. The NPV-positive
+# pie chart is fleet-wide metadata (same NPV_POS_CNT/TOTAL_ASSETS shown on
+# both reports' cover pages via the "21/45 motors NPV positive" fraction),
+# not a Top-10-scoped figure, so it uses the same values here too.
+
+def _set_single_point_values(ctxt, values):
+    """Overwrite the single <c:pt idx="0"> value of the first len(values)
+    <c:numRef> blocks found, in document order."""
+    refs = list(re.finditer(r'<c:numRef>.*?</c:numRef>', ctxt, re.DOTALL))
+    out, prev = [], 0
+    for ref, val in zip(refs, values):
+        out.append(ctxt[prev:ref.start()])
+        seg = re.sub(r'(<c:pt idx="0"><c:v>)[^<]*(</c:v>)',
+                     lambda m: f'{m.group(1)}{val:.10f}{m.group(2)}',
+                     ref.group(), count=1)
+        out.append(seg)
+        prev = ref.end()
+    out.append(ctxt[prev:])
+    return ''.join(out)
+
+
+def _set_last_multi_point_values(ctxt, values):
+    """Overwrite every <c:pt> value inside the LAST <c:numRef> block found —
+    that block holds the plotted series regardless of how many numRefs
+    (categories + series, or just series) the template's chart declares."""
+    refs = list(re.finditer(r'<c:numRef>.*?</c:numRef>', ctxt, re.DOTALL))
+    if not refs:
+        return ctxt
+    ref = refs[-1]
+    seg = ref.group()
+    pts = list(re.finditer(r'<c:pt idx="(\d+)"><c:v>[^<]*</c:v></c:pt>', seg))
+    new_seg = seg
+    for pt, val in list(zip(pts, values))[::-1]:
+        idx = pt.group(1)
+        new_seg = new_seg[:pt.start()] + f'<c:pt idx="{idx}"><c:v>{val}</c:v></c:pt>' + new_seg[pt.end():]
+    return ctxt[:ref.start()] + new_seg + ctxt[ref.end():]
+
+
+# Binary/zip parts rewritten below, applied at write time alongside
+# doc_xml/footer_xmls (see the write loop at the bottom of this script).
+binary_overrides = {}
+
+# Chart 1: Energy Consumption bar (before / after, All-Assets — "Now vs
+# Upgraded Fleet") — 2 single-point series
+cons_before = float(CONSUMP_BEFORE or 0)
+cons_after  = cons_before - float(SAVINGS_KWH or 0)
+if 'word/charts/chart1.xml' in names:
+    ctxt = zin.read('word/charts/chart1.xml').decode('utf-8')
+    ctxt = _set_single_point_values(ctxt, [cons_before, cons_after])
+    binary_overrides['word/charts/chart1.xml'] = ctxt.encode('utf-8')
+    print(f"  Chart 1 (Energy Consumption): {fmt(cons_before)} kWh -> {fmt(cons_after)} kWh")
+
+# Chart 2: NPV positive pie chart (fleet-wide, All-Assets) — update embedded
+# Excel workbook + cache
+if 'word/embeddings/Microsoft_Excel_Worksheet.xlsx' in names:
+    emb_bytes = zin.read('word/embeddings/Microsoft_Excel_Worksheet.xlsx')
+    ewb = openpyxl.load_workbook(io.BytesIO(emb_bytes))
+    ews = ewb.active
+    ews['B2'] = NPV_POS_CNT
+    ews['B3'] = TOTAL_ASSETS - NPV_POS_CNT
+    ews['A2'] = 'NPV Positive'
+    ews['A3'] = 'Remaining Assets'
+    buf2 = io.BytesIO()
+    ewb.save(buf2)
+    ewb.close()
+    binary_overrides['word/embeddings/Microsoft_Excel_Worksheet.xlsx'] = buf2.getvalue()
+    if 'word/charts/chart2.xml' in names:
+        c2txt = zin.read('word/charts/chart2.xml').decode('utf-8')
+        c2txt = _set_last_multi_point_values(c2txt, [NPV_POS_CNT, TOTAL_ASSETS - NPV_POS_CNT])
+        c2txt = c2txt.replace('<c:v>2nd Qtr</c:v>', '<c:v>Remaining Assets</c:v>')
+        binary_overrides['word/charts/chart2.xml'] = c2txt.encode('utf-8')
+    print(f"  Chart 2 (NPV pie): {NPV_POS_CNT} NPV+ / {TOTAL_ASSETS - NPV_POS_CNT} remaining")
+
+# Chart 3: Payback sensitivity (All-Assets) — overwrite the plotted payback series
+if 'word/charts/chart3.xml' in names and SENSITIVITY:
+    ctxt = zin.read('word/charts/chart3.xml').decode('utf-8')
+    ctxt = _set_last_multi_point_values(ctxt, [s[1] for s in SENSITIVITY])
+    binary_overrides['word/charts/chart3.xml'] = ctxt.encode('utf-8')
+    print(f"  Chart 3 (Payback sensitivity): {[round(s[1], 2) for s in SENSITIVITY]}")
+
 # ── Phase 2: Dynamic Table Rendering ─────────────────────────────────────────
 # Field-map keys are normalize_header(template header text) — see report_table_utils.
 # '#' / 'application' / etc. below match the templates' actual header row, not
@@ -546,15 +678,20 @@ _DETAILS_FIELD_MAP = {
     '#':                     lambda a: str(a['num']),
     'application':           lambda a: a['tag'],
     'ie':                    lambda a: a['ie'],
+    'eff.':                  lambda a: a['eff'] if a['eff'] else '-',
     'driven load':           lambda a: a['load'],
     'flow control method':   lambda a: a['flow_ctrl'],
     'connection':            lambda a: a['connection'],
     'output (kw)':           lambda a: str(a['output_kw']),
     'running time (hours)':  lambda a: str(a['run_hrs']),
-    # Loading% only applies to DOL connections, frequency only to VSD — the
-    # single avg_val field covers both depending on which was measured.
-    'avg. loading (%)':      lambda a: a['avg_val'] if a['connection'] == 'DOL' else '-',
-    'avg. frequency (hz)':   lambda a: a['avg_val'] if a['connection'] != 'DOL' else '-',
+    # Each is its own workbook column (COL_AVG_LOAD/COL_AVG_FLOW/COL_AVG_FREQ),
+    # never a shared field — and always shown as-is, whatever the workbook
+    # holds for this asset, regardless of DOL/VSD connection type. Blank
+    # cells already come back as "-" from _fmt_avg(); no separate suppression
+    # by connection type is applied here.
+    'avg. loading (%)':      lambda a: a['avg_loading'],
+    'avg. flow (%)':         lambda a: a['avg_flow'],
+    'avg. frequency (hz)':   lambda a: a['avg_freq'],
     'recommended ess motor': lambda a: a['ess_motor'],
     'ess connection':        lambda a: a['ess_conn'],
 }
@@ -586,7 +723,7 @@ doc_xml = render_table_section(
     doc_xml, 'Application Details (Top 10)',
     anchor='Application Details – Top 10',
     asset_list=top10, field_map=_DETAILS_FIELD_MAP, required=_DETAILS_REQUIRED,
-    n_totals=0,
+    n_totals=0, remove_cols=REMOVE_DETAIL_COLS,
 )
 
 # Unlike the older tokenized top-10 template this engine was originally built
@@ -609,7 +746,7 @@ doc_xml = render_table_section(
     doc_xml, 'Application Details (All Assets, appendix)',
     anchor='Details of Recommendation – All Assets',
     asset_list=assets_sorted, field_map=_DETAILS_FIELD_MAP, required=_DETAILS_REQUIRED,
-    n_totals=0,
+    n_totals=0, remove_cols=REMOVE_DETAIL_COLS,
 )
 
 print("  Phase 2 complete.")
@@ -644,6 +781,20 @@ _kpi_replacements = [
 ]
 
 doc_xml = replace_literal_paragraphs(doc_xml, _cover_replacements + _kpi_replacements)
+
+# Energy Savings tables' own currency-denominated column headers are baked
+# into the template as literal "(EUR)" text, never covered by the field-map
+# based table renderer above (which only matches header text to a column
+# index via normalize_header(), stripping the currency code rather than
+# rewriting it). This template repeats the header row twice (Top-10 table +
+# All-Assets appendix table), so both need it and 2 matches is expected —
+# warn_ambiguous is off for that reason, not because the count is uncertain.
+_currency_header_replacements = [
+    ('Energy Cost (EUR)',         f"Energy Cost ({CURRENCY})"),
+    ('Energy Cost Savings (EUR)', f"Energy Cost Savings ({CURRENCY})"),
+    ('Investment (EUR)',          f"Investment ({CURRENCY})"),
+]
+doc_xml = replace_literal_paragraphs(doc_xml, _currency_header_replacements, warn_ambiguous=False)
 
 # Payback / IRR are overlaid as a text box on top of a donut-shaped image
 # (not a table cell, not a native chart). Scoped to text-box content only -
@@ -705,6 +856,29 @@ footer_xmls = [re.sub(r'\d{4}-\d{2}-\d{2}', RPT_DATE_ISO, fx) for fx in footer_x
 
 print("  Scalar substitution complete.")
 
+# ── Custom Appendix content (Issue 2) ────────────────────────────────────────
+# Spliced in last, after every other doc_xml substitution above, so nothing
+# in the user's own rich-text content can ever coincidentally match one of
+# those literal find/replace targets (e.g. a KPI figure typed verbatim).
+if APPENDIX_HTML_PATH:
+    from appendix_html import splice_appendix, ensure_image_content_types
+    _rels_name = 'word/_rels/document.xml.rels'
+    _ct_name = '[Content_Types].xml'
+    _rels_xml = zin.read(_rels_name).decode('utf-8')
+    _existing_media = [n for n in names if n.startswith('word/media/')]
+    doc_xml, _rels_xml, _appendix_media = splice_appendix(
+        doc_xml, _rels_xml, APPENDIX_HTML_PATH, _existing_media,
+        position=APPENDIX_POSITION, details_anchor='Application Details – Top 10',
+    )
+    if _appendix_media:
+        binary_overrides[_rels_name] = _rels_xml.encode('utf-8')
+        binary_overrides[_ct_name] = ensure_image_content_types(
+            zin.read(_ct_name).decode('utf-8')
+        ).encode('utf-8')
+        for _media_name, _data in _appendix_media.items():
+            binary_overrides[_media_name] = _data
+            names.append(_media_name)  # new zip entry, not in the original template
+
 # ── Write output docx ─────────────────────────────────────────────────────────
 safe_customer = re.sub(r'[^\w\- ]', '', CUSTOMER).strip().replace(' ', '_')
 safe_plant    = re.sub(r'[^\w\- ]', '', PLANT).strip().replace(' ', '_')
@@ -718,6 +892,8 @@ with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zout:
             zout.writestr(name, doc_xml.encode('utf-8'))
         elif name in footer_names:
             zout.writestr(name, footer_xmls[footer_names.index(name)].encode('utf-8'))
+        elif name in binary_overrides:
+            zout.writestr(name, binary_overrides[name])
         else:
             zout.writestr(name, zin.read(name))
 

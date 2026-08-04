@@ -133,6 +133,9 @@ def generate():
         rpt_date            = request.form.get("rpt_date", "").strip()
         gen_report          = request.form.get("gen_report", "0") == "1"
         generate_executive  = request.form.get("generate_executive", "0") == "1"
+        exclude_cols        = request.form.get("exclude_cols", "").strip()
+        appendix_html       = request.form.get("appendix_html", "").strip()
+        appendix_position   = request.form.get("appendix_position", "").strip()
 
         if gen_report and customer and plant:
             if template_key != "standard":
@@ -149,6 +152,18 @@ def generate():
             cmd = [sys.executable, script_path, excel_out, customer, plant]
             if rpt_date:
                 cmd.append(rpt_date)
+
+            # Optional named flags — order-independent, so appending them
+            # here is safe even when rpt_date/data_source were left blank.
+            if exclude_cols:
+                cmd += ["--exclude-cols", exclude_cols]
+            if appendix_html:
+                appendix_path = os.path.join(tmp_dir, "appendix.html")
+                with open(appendix_path, "w", encoding="utf-8") as f:
+                    f.write(appendix_html)
+                cmd += ["--appendix-html", appendix_path]
+                if appendix_position:
+                    cmd += ["--appendix-position", appendix_position]
 
             _env = os.environ.copy()
             _env["PYTHONIOENCODING"] = "utf-8"
